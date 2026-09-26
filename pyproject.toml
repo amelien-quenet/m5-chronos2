@@ -1,0 +1,27 @@
+[project]
+name = "m5-chronos2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Amélien Quenet", email = "qamelien@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "chronos-forecasting>=2.0",
+    "kaggle>=2.2.4",
+    "lightgbm>=4.7.0",
+    "matplotlib>=3.11.2",
+    "numpy<2",
+    "polars>=1.44.2",
+    "pyarrow>=25.0.1",
+    "torch==2.2.2",
+    "xgboost>=3.4.1",
+]
+
+[project.scripts]
+m5-chronos2 = "m5_chronos2:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
