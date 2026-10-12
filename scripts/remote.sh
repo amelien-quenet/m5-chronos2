@@ -147,30 +147,37 @@ cmd_stop() {
 }
 
 # --- Les gros fichiers voyagent par rsync -------------------------------------------
-# Les checkpoints Hugging Face intermediaires pesent des centaines de Mo pour rien ;
-# seul leur trainer_state.json est utile (courbe de perte du notebook 08).
-RSYNC_FILTERS=(
-  -f '+ */'
-  -f '+ **/trainer_state.json'
-  -f '- finetuned/**/checkpoint-*/**'
-  -f '+ *'
+# macOS livre rsync 2.6.9 (2006) : pas de --info=progress2, pas de -h, et les motifs
+# de filtre avec ** y sont hasardeux. On s'en tient a --progress et a des --exclude
+# simples, qui fonctionnent aussi avec un rsync 3.x.
+#
+# Les checkpoints Hugging Face intermediaires pesent des centaines de Mo (poids,
+# etat de l'optimiseur, etats de generateurs aleatoires) pour une seule information
+# utile : trainer_state.json, d'ou le notebook 08 tire la courbe de perte. On exclut
+# donc les gros fichiers DANS chaque checkpoint-*, pas le repertoire lui-meme.
+RSYNC_OPTS=(
+  -az --progress
+  "--exclude=checkpoint-*/*.safetensors"
+  "--exclude=checkpoint-*/*.bin"
+  "--exclude=checkpoint-*/*.pt"
+  "--exclude=checkpoint-*/*.pth"
+  "--exclude=checkpoint-*/rng_state*"
 )
 
 cmd_pull() {
   check_alive
   say "rapatriement artifacts/ depuis la tour"
-  rsync -az --info=progress2 "${RSYNC_FILTERS[@]}" \
-    "$HOST:$REMOTE_DIR/artifacts/" artifacts/
+  rsync "${RSYNC_OPTS[@]}" "$HOST:$REMOTE_DIR/artifacts/" artifacts/
   say "fait. Les notebooks peuvent etre re-executes : chaque cached() trouvera son parquet."
 }
 
 cmd_push() {
   check_alive
   say "envoi artifacts/ vers la tour"
-  rsync -az --info=progress2 "${RSYNC_FILTERS[@]}" \
-    artifacts/ "$HOST:$REMOTE_DIR/artifacts/"
+  rsync "${RSYNC_OPTS[@]}" artifacts/ "$HOST:$REMOTE_DIR/artifacts/"
   say "fait."
 }
+
 
 case "${1:-}" in
   check)  shift; cmd_check "$@" ;;
