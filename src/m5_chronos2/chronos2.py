@@ -108,14 +108,19 @@ def get_pipeline(model_path: str | Path = MODEL_PATH, device: str | None = None)
     device = resolve_device(device)
     key = (str(model_path), device)
     if key not in _PIPELINES:
-        try:
-            pipeline = Chronos2Pipeline.from_pretrained(
-                str(model_path), device_map=device, torch_dtype=torch.float32
-            )
-        except TypeError:
-            # Older or newer signature: the keyword is not accepted. Load anyway and
-            # let pipeline_dtype expose what we actually got.
-            print("  WARNING: from_pretrained rejected torch_dtype -- check pipeline_dtype()")
+        # transformers renamed `torch_dtype` to `dtype` and warns on the old name;
+        # try the current one first and fall back for older versions.
+        pipeline = None
+        for keyword in ("dtype", "torch_dtype"):
+            try:
+                pipeline = Chronos2Pipeline.from_pretrained(
+                    str(model_path), device_map=device, **{keyword: torch.float32}
+                )
+                break
+            except TypeError:
+                continue
+        if pipeline is None:
+            print("  WARNING: from_pretrained accepts no dtype keyword -- check pipeline_dtype()")
             pipeline = Chronos2Pipeline.from_pretrained(str(model_path), device_map=device)
         _PIPELINES[key] = pipeline
     return _PIPELINES[key]
