@@ -12,10 +12,18 @@ dependencies = [
     "kaggle>=2.2.4",
     "lightgbm>=4.7.0",
     "matplotlib>=3.11.2",
+    # numpy<2 est impose par torch 2.2.2 (Mac Intel) et conserve a l'identique sur
+    # la tour : une version de numpy differente entre les deux machines rendrait
+    # les resultats non comparables.
     "numpy<2",
     "peft>=0.18.1",
     "polars>=1.44.2",
-    "pyarrow>=25.0.1",
+    # pyarrow 26.0.0 refuse de s'importer avec numpy 1.x ("pyarrow requires NumPy
+    # 2.0 or newer"). Le plafond est donc une consequence directe de numpy<2, et
+    # il tombera le jour ou le Mac Intel ne sera plus la contrainte. Sans lui,
+    # polars.to_pandas() -- la seule frontiere ou le projet passe par pyarrow --
+    # echoue a l'import. Constate le 2026-10-12.
+    "pyarrow>=25.0.1,<26",
     "scikit-learn>=1.9.1",
     # Seul torch varie entre les deux machines ; tout le reste est pinne a
     # l'identique, condition pour que les resultats des deux cotes restent
@@ -60,4 +68,11 @@ python-preference = "only-managed"
 # 2026-10-12 : restreindre les environnements reduit le lock de 454 Ko a
 # 189 Ko et n'a pas resolu le probleme CUDA ; c'est une optimisation sans
 # benefice qui masque la resolution reelle.
+#
+# AVERTISSEMENT - ne pas supprimer uv.lock pour "forcer" une resolution. Le
+# lock est la seule trace d'une combinaison de versions qui fonctionne ; le
+# jeter remonte silencieusement des paquets dont les contraintes de
+# compatibilite ne sont pas toutes exprimees dans leurs metadonnees (c'est
+# ainsi que pyarrow 26 est arrive). Utiliser `uv lock --upgrade-package <nom>`
+# pour ne bouger qu'un paquet, et committer le lock a chaque changement.
 #
