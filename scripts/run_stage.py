@@ -427,40 +427,62 @@ def stage_finetune_predict(study: Study) -> list[Path]:
     return paths
 
 
-def make_stage_finetune_test(finetune_context: int | None):
+def make_stage_finetune_test(contexts: list[int] | None):
     def stage_finetune_test(study: Study) -> list[Path]:
-        """Re-fine-tune a l'origine de TEST, a la seule longueur retenue sur validation.
+        """Tout ce dont la section 4 du notebook 08 a besoin a l'origine de TEST.
 
-        La longueur doit etre passee explicitement (--finetune-context). C'est
-        volontaire : la choisir ici reviendrait a selectionner sur la fenetre de test,
-        ce que le protocole du notebook 03 interdit. Le chiffre vient du notebook 08,
-        lu sur la validation, et le passer a la main en laisse une trace.
+        Produit, pour chaque longueur passee en --finetune-context :
+          - le checkpoint LoRA re-entraine a l'origine de test ;
+          - ses previsions aux longueurs de prediction retenues ;
+        et, dans tous les cas, les previsions vanilla a l'origine de test aux memes
+        longueurs -- le notebook en a besoin si le gagnant d'un segment est vanilla.
+
+        Les longueurs doivent etre passees explicitement. C'est volontaire : les
+        deduire ici reviendrait a selectionner sur la fenetre de test, ce que le
+        protocole du notebook 03 interdit. Passer les deux longueurs est legitime
+        -- calculer n'est pas choisir, et le notebook 08 ne note que le gagnant
+        designe sur la validation -- mais le geste reste explicite et trace.
         """
-        if finetune_context is None:
+        if not contexts:
             raise SystemExit(
-                "\nfinetune_test exige --finetune-context <longueur>.\n"
-                "Cette longueur est celle que le notebook 08 a retenue SUR LA VALIDATION.\n"
+                "\nfinetune_test exige --finetune-context.\n"
+                "  --finetune-context 1829        la seule longueur retenue sur validation\n"
+                "  --finetune-context 1099,1829   les deux, pour que le notebook 08 tourne\n"
+                "                                 d'un bout a l'autre sans rien calculer en local\n"
                 "La deduire ici reviendrait a choisir sur la fenetre de test."
             )
         origin = study.test_origin
-        inputs = finetune_inputs(study.sales, origin, study.series_ids)
-        checkpoint = _finetune_at(study, origin, finetune_context, inputs)
         choice = study.choice
-        paths = [checkpoint]
-        for length in sorted({choice["early_context"], choice["late_context"]}):
-            name = (f"lora_ctx{finetune_context}_steps{NUM_STEPS}_lr{LEARNING_RATE:g}"
-                    f"_bs{BATCH_SIZE}_context_{length}_origin{origin}")
-            path = experiment_path(name, study.name)
-            print(f"  LoRA@{finetune_context} -> prediction test au contexte {length}")
+        predict_contexts = sorted({choice["early_context"], choice["late_context"]})
+        paths = []
+
+        # Vanilla a l'origine de test. Nom identique a celui du notebook 08.
+        for length in predict_contexts:
+            path = experiment_path(f"context_{length}_origin{origin}", study.name)
+            print(f"  vanilla test, contexte {length}")
             cached(path, lambda length=length: forecast(
-                history(study.sales, origin), origin, context_length=int(length),
-                model_path=checkpoint, device=study.device))
+                history(study.sales, origin), origin,
+                context_length=int(length), device=study.device))
             paths.append(path)
+
+        inputs = finetune_inputs(study.sales, origin, study.series_ids)
+        for finetune_context in contexts:
+            checkpoint = _finetune_at(study, origin, finetune_context, inputs)
+            paths.append(checkpoint)
+            for length in predict_contexts:
+                name = (f"lora_ctx{finetune_context}_steps{NUM_STEPS}_lr{LEARNING_RATE:g}"
+                        f"_bs{BATCH_SIZE}_context_{length}_origin{origin}")
+                path = experiment_path(name, study.name)
+                print(f"  LoRA@{finetune_context} -> prediction test au contexte {length}")
+                cached(path, lambda length=length, checkpoint=checkpoint: forecast(
+                    history(study.sales, origin), origin, context_length=int(length),
+                    model_path=checkpoint, device=study.device))
+                paths.append(path)
         return paths
     return stage_finetune_test
 
 
-def build_registry(finetune_context: int | None) -> dict[str, Stage]:
+def build_registry(finetune_contexts: list[int] | None) -> dict[str, Stage]:
     return {s.name: s for s in [
         Stage("vanilla", "Chronos-2 vanilla, deux origines", stage_vanilla,
               cost="heavy", note="~2 min GPU / ~45 min CPU"),
@@ -482,7 +504,7 @@ def build_registry(finetune_context: int | None) -> dict[str, Stage]:
               note="~32 min / contexte GPU ; exige context_choice.json"),
         Stage("finetune_predict", "previsions des checkpoints LoRA", stage_finetune_predict,
               needs_gpu=True, cost="heavy", requires=["finetune"]),
-        Stage("finetune_test", "re-fine-tune a l'origine de test", make_stage_finetune_test(finetune_context),
+        Stage("finetune_test", "origine de test : vanilla + re-fine-tune", make_stage_finetune_test(finetune_contexts),
               needs_gpu=True, cost="heavy", note="exige --finetune-context"),
     ]}
 
@@ -504,12 +526,15 @@ def main():
     parser.add_argument("--device", default=None)
     parser.add_argument("--allow-slow", action="store_true",
                         help="autorise une etape needs_gpu sur CPU")
-    parser.add_argument("--finetune-context", type=int, default=None,
-                        help="longueur retenue sur validation, pour finetune_test")
+    parser.add_argument("--finetune-context", default=None,
+                        help="longueur(s) retenue(s) sur validation, pour finetune_test ; "
+                             "une ou plusieurs, separees par des virgules")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    registry = build_registry(args.finetune_context)
+    finetune_contexts = ([int(v) for v in args.finetune_context.split(",") if v.strip()]
+                         if args.finetune_context else None)
+    registry = build_registry(finetune_contexts)
 
     if args.list:
         print(f"{'etape':20s} {'gpu':4s} {'cout':7s} {'depend de':18s} note")
