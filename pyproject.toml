@@ -13,9 +13,22 @@ dependencies = [
     "lightgbm>=4.7.0",
     "matplotlib>=3.11.2",
     "numpy<2",
+    "peft>=0.18.1",
     "polars>=1.44.2",
     "pyarrow>=25.0.1",
-    "torch==2.2.2",
+    "scikit-learn>=1.9.1",
+    # Seul torch varie entre les deux machines ; tout le reste est pinné à
+    # l'identique, condition pour que les resultats des deux cotes restent
+    # comparables.
+    #   macOS Intel : 2.2.2 est le dernier build publie pour cette plateforme.
+    #   Linux (WSL) : la lignee cu126 est la derniere a inclure Pascal / sm_61
+    #                 (retire des builds CUDA 12.8+, absent de CUDA 13.x).
+    #                 cu126 disparait a partir de PyTorch 2.15.
+    "torch==2.2.2 ; sys_platform == 'darwin'",
+    "torch==2.6.0 ; sys_platform == 'linux'",
+    # transformers 5 exige torch >= 2.5 : impossible sur le Mac Intel, donc
+    # on reste en 4.x des deux cotes plutot que de diverger.
+    "transformers>=4.41,<5",
     "xgboost>=3.4.1",
 ]
 
@@ -25,3 +38,29 @@ m5-chronos2 = "m5_chronos2:main"
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+]
+
+[tool.uv]
+python-preference = "only-managed"
+# Resolution restreinte aux deux seules plateformes du projet : le lock reste
+# petit et aucune plateforme exotique ne peut faire echouer la resolution.
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+# Les wheels CUDA ne sont pas sur PyPI. Index declare "explicit" : il n'est
+# consulte que pour les paquets qui le designent nommement ci-dessous.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux'" },
+]
