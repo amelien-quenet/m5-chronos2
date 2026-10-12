@@ -13,8 +13,17 @@ Conventions, shared with the rest of the project
   stays gap-free, which Chronos-2 requires.
 - Forecasts use the standard format of metrics.py:
   id, origin, date, y_pred, q0.1 ... q0.9   (y_pred is the median, q0.5).
+
+Hardware
+--------
+Two machines run this code: an Intel MacBook (CPU, torch 2.2.2) and a tower with
+a GTX 1080 reached over SSH (CUDA, torch 2.6.0). `resolve_device` is the only
+place where that choice is made, and `device_report` is what gets recorded next
+to every artifact -- CPU and GPU do not return bit-identical numbers, so a
+comparison table must come from a single device.
 """
 
+import os
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -40,19 +49,86 @@ MIN_BLANK_DAYS = 14
 _PIPELINES: dict = {}
 
 
+# --- Which machine are we on -------------------------------------------------------
+
+def resolve_device(device: str | None = None) -> str:
+    """'cuda' if a GPU is present, 'cpu' otherwise. M5_DEVICE overrides both.
+
+    The single place where the hardware is chosen: no notebook and no stage script
+    hardcodes it, so the same code runs on the laptop and on the tower, and the
+    choice can be recorded with the artifact it produced.
+    """
+    if device is not None:
+        return device
+    forced = os.environ.get("M5_DEVICE")
+    if forced:
+        return forced
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def device_report(device: str | None = None) -> dict:
+    """What to print before a long run, and to store beside every artifact."""
+    import torch
+
+    device = resolve_device(device)
+    report = {"device": device, "torch": torch.__version__}
+    if device.startswith("cuda"):
+        properties = torch.cuda.get_device_properties(0)
+        report |= {
+            "gpu": torch.cuda.get_device_name(0),
+            "capability": "%d.%d" % torch.cuda.get_device_capability(0),
+            "vram_gb": round(properties.total_memory / 1024**3, 1),
+            "arch_list": torch.cuda.get_arch_list(),
+        }
+    return report
+
+
 # --- The model -----------------------------------------------------------------
 
-def get_pipeline(model_path: str | Path = MODEL_PATH, device: str = "cpu"):
+def get_pipeline(model_path: str | Path = MODEL_PATH, device: str | None = None):
     """Load a Chronos-2 pipeline once and keep it (loading is the slow part).
 
     `model_path` is a Hugging Face name or a local fine-tuned checkpoint.
+
+    The dtype is forced to float32, on GPU as well as on CPU. This is deliberate
+    and counter-intuitive: half precision is the usual default on CUDA, but the
+    GTX 1080 is Pascal (sm_61), which has no bfloat16 hardware at all and runs
+    float16 at 1/64 of its float32 rate. Letting the library pick half precision
+    there would make the GPU slower than the laptop CPU. Memory is the price;
+    `finetune` pays it with gradient accumulation rather than with dtype.
+
+    Call `pipeline_dtype` afterwards: it reads the dtype actually loaded, which is
+    the only trustworthy confirmation that this took effect.
     """
+    import torch
     from chronos import Chronos2Pipeline
 
+    device = resolve_device(device)
     key = (str(model_path), device)
     if key not in _PIPELINES:
-        _PIPELINES[key] = Chronos2Pipeline.from_pretrained(str(model_path), device_map=device)
+        try:
+            pipeline = Chronos2Pipeline.from_pretrained(
+                str(model_path), device_map=device, torch_dtype=torch.float32
+            )
+        except TypeError:
+            # Older or newer signature: the keyword is not accepted. Load anyway and
+            # let pipeline_dtype expose what we actually got.
+            print("  WARNING: from_pretrained rejected torch_dtype -- check pipeline_dtype()")
+            pipeline = Chronos2Pipeline.from_pretrained(str(model_path), device_map=device)
+        _PIPELINES[key] = pipeline
     return _PIPELINES[key]
+
+
+def pipeline_dtype(pipeline) -> str:
+    """Dtype of the loaded weights. Anything other than float32 is a problem on Pascal."""
+    import torch
+
+    for attribute in vars(pipeline).values():
+        if isinstance(attribute, torch.nn.Module):
+            return str(next(attribute.parameters()).dtype)
+    return "unknown"
 
 
 def pipeline_limits(pipeline) -> dict:
@@ -62,6 +138,7 @@ def pipeline_limits(pipeline) -> dict:
         "model_context_length": pipeline.model_context_length,
         "model_prediction_length": pipeline.model_prediction_length,
         "output_patch_size": pipeline.model_output_patch_size,
+        "dtype": pipeline_dtype(pipeline),
     }
 
 
@@ -115,7 +192,7 @@ def forecast(
     cross_learning: bool = False,
     batch_size: int = 100,
     model_path: str | Path = MODEL_PATH,
-    device: str = "cpu",
+    device: str | None = None,
 ) -> pl.DataFrame:
     """Forecast the HORIZON days after `origin` for every series of `context`.
 
@@ -127,7 +204,9 @@ def forecast(
     - context_length: the model reads the last `context_length` days and ignores the
       rest. None = the model's maximum;
     - cross_learning: False forecasts every series on its own (batching is then only
-      a matter of speed); True lets the series of a batch attend to each other.
+      a matter of speed); True lets the series of a batch attend to each other;
+    - device: None resolves it (see resolve_device). On the GPU, `batch_size` is
+      bounded by VRAM rather than by patience: lower it if inference runs out.
 
     Returns the standard forecast format. With several targets, one block per target,
     told apart by a 'target_name' column. Every quantile is clipped at 0 (sales).
@@ -271,6 +350,33 @@ def checkpoint_dir(roster: str, origin: date, context_length: int, num_steps: in
     return FINETUNED_DIR / roster / name
 
 
+# VRAM of the tower's GTX 1080, in GiB: below this, assume gradient accumulation is
+# needed rather than discovering it through an out-of-memory error at step 3.
+SMALL_VRAM_GB = 12.0
+DEFAULT_MICRO_BATCH = 4
+
+
+def suggest_micro_batch(batch_size: int, device: str | None = None) -> int | None:
+    """Micro-batch to use, or None when the whole batch fits.
+
+    On CPU memory is the machine's RAM and the full batch is fine. On a small GPU it
+    is not: 8 GiB cannot hold 32 series at a context of several thousand days in
+    float32. Returns the largest divisor of `batch_size` that is <= DEFAULT_MICRO_BATCH.
+    """
+    device = resolve_device(device)
+    if not device.startswith("cuda"):
+        return None
+    import torch
+
+    vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    if vram >= SMALL_VRAM_GB:
+        return None
+    for micro in range(min(DEFAULT_MICRO_BATCH, batch_size), 0, -1):
+        if batch_size % micro == 0:
+            return micro
+    return 1
+
+
 def finetune(
     train_inputs: list,
     validation_inputs: list | None,
@@ -279,15 +385,26 @@ def finetune(
     num_steps: int = 1000,
     learning_rate: float = 1e-5,
     batch_size: int = 32,
-    device: str = "cpu",
+    micro_batch_size: int | None = None,
+    device: str | None = None,
 ) -> Path:
     """LoRA fine-tune of Chronos-2. Returns the checkpoint path (usable as a model_path).
 
-    Two traps handled here:
+    `batch_size` is always the *effective* batch size, the one that defines the update
+    and therefore the result. `micro_batch_size` only changes how that update is
+    computed: the trainer processes that many series at a time and applies the update
+    after `batch_size // micro_batch_size` of them. The gradient is the same, the peak
+    memory is a fraction of it. Left to None it is chosen by `suggest_micro_batch`,
+    which splits on a small GPU and leaves the CPU alone.
+
+    Three traps handled here:
     - without the `peft` package, Chronos-2 silently falls back to FULL fine-tuning:
       we fail instead;
     - Chronos-2 asks the trainer for the fused AdamW optimizer, which older torch
-      versions (2.2 on Intel Macs) only support on CUDA: on CPU we ask for the plain one.
+      versions (2.2 on Intel Macs) only support on CUDA: on CPU we ask for the plain one;
+    - no fp16/bf16 flag is passed on purpose. The trainer defaults to full precision,
+      and the model was loaded in float32 by `get_pipeline` -- on Pascal, half
+      precision is a slowdown, not a speedup (see that function).
     """
     import importlib.util
 
@@ -299,7 +416,15 @@ def finetune(
         print(f"  checkpoint found, not retrained: {checkpoint.parent.name}")
         return checkpoint
 
+    device = resolve_device(device)
+    micro = micro_batch_size if micro_batch_size is not None else suggest_micro_batch(batch_size, device)
+    micro = micro or batch_size
+    assert batch_size % micro == 0, f"batch_size {batch_size} is not a multiple of {micro}"
+    accumulation = batch_size // micro
+
     pipeline = get_pipeline(MODEL_PATH, device)   # fit() trains a copy; this one stays vanilla
+    print(f"  fine-tune on {device}, dtype {pipeline_dtype(pipeline)}, "
+          f"batch {batch_size} = {micro} x {accumulation} accumulated")
     pipeline.fit(
         inputs=train_inputs,
         validation_inputs=validation_inputs,
@@ -308,7 +433,8 @@ def finetune(
         context_length=context_length,
         learning_rate=learning_rate,
         num_steps=num_steps,
-        batch_size=batch_size,
+        batch_size=micro,
+        gradient_accumulation_steps=accumulation,
         output_dir=output_dir,
         optim="adamw_torch_fused" if device.startswith("cuda") else "adamw_torch",
     )
