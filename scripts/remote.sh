@@ -95,11 +95,11 @@ cmd_run() {
   log="$LOG_DIR/${stamp}.log"
 
   say "lancement detache : run_stage.py $*"
-  # tmux garde le shell en vie apres la fin de la commande, pour que la derniere
-  # sortie reste lisible ; le journal, lui, est sur disque de toute facon.
+  # La session tmux se termine avec la commande : son existence est donc un
+  # signal fiable de "run en cours". La sortie, elle, reste dans le journal.
   ssh "$HOST" "cd $REMOTE_DIR && mkdir -p $LOG_DIR && \
     tmux new-session -d -s $SESSION \
-    \"uv run python scripts/run_stage.py $* 2>&1 | tee $log; echo; echo '--- termine ---'; sleep 86400\""
+    \"uv run python scripts/run_stage.py $* 2>&1 | tee $log; echo '--- termine ---' >> $log\""
 
   sleep 3
   ssh "$HOST" "cd $REMOTE_DIR && tail -n 20 $log 2>/dev/null || echo '(journal pas encore ecrit)'"
@@ -124,13 +124,19 @@ cmd_log() {
 
 cmd_status() {
   check_alive
-  if ssh "$HOST" "tmux has-session -t $SESSION" 2>/dev/null; then
-    say "run en cours"
-    ssh "$HOST" "cd $REMOTE_DIR && tail -n 5 \$(ls -t $LOG_DIR/*.log | head -1)"
+  local log
+  log=$(ssh "$HOST" "cd $REMOTE_DIR && ls -t $LOG_DIR/*.log 2>/dev/null | head -1")
+  if [[ -z "$log" ]]; then say "aucun journal sur la tour"; return; fi
+
+  if ssh "$HOST" "cd $REMOTE_DIR && grep -q -- '--- termine ---' '$log'"; then
+    say "TERMINE   $log"
+  elif ssh "$HOST" "tmux has-session -t $SESSION" 2>/dev/null; then
+    say "EN COURS  $log"
   else
-    say "aucun run en cours"
-    ssh "$HOST" "cd $REMOTE_DIR && ls -t $LOG_DIR/*.log 2>/dev/null | head -3" || true
+    # Ni marqueur de fin ni session : le processus est mort sans finir.
+    say "INTERROMPU (ni marqueur de fin, ni session tmux)   $log"
   fi
+  ssh "$HOST" "cd $REMOTE_DIR && tail -n 8 '$log'"
 }
 
 cmd_stop() {
