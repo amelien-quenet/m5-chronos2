@@ -17,13 +17,22 @@ dependencies = [
     "polars>=1.44.2",
     "pyarrow>=25.0.1",
     "scikit-learn>=1.9.1",
-    # Seul torch varie entre les deux machines ; tout le reste est pinné à
+    # Seul torch varie entre les deux machines ; tout le reste est pinne a
     # l'identique, condition pour que les resultats des deux cotes restent
     # comparables.
+    #
     #   macOS Intel : 2.2.2 est le dernier build publie pour cette plateforme.
-    #   Linux (WSL) : la lignee cu126 est la derniere a inclure Pascal / sm_61
-    #                 (retire des builds CUDA 12.8+, absent de CUDA 13.x).
-    #                 cu126 disparait a partir de PyTorch 2.15.
+    #
+    #   Linux (WSL + GTX 1080) : 2.6.0 depuis PyPI, build CUDA 12.4. Pascal
+    #   (sm_61) est encore inclus dans les builds CUDA 12.x ; il a ete retire
+    #   des builds 12.8+ et n'existe pas dans CUDA 13.x, donc toute version de
+    #   torch >= 2.7 publiee en cu128 est hors de portee de cette carte.
+    #
+    # Pourquoi PyPI et non l'index download.pytorch.org/whl/cu126 : essaye le
+    # 2026-10-12, uv lit bien les metadonnees de ce wheel mais n'inscrit aucune
+    # de ses dependances nvidia-* dans le lock. Resultat : torch s'installe et
+    # echoue a l'import (libcudart.so.12 introuvable). Depuis PyPI, torch et
+    # ses dependances CUDA viennent du meme registre et le lock est complet.
     "torch==2.2.2 ; sys_platform == 'darwin'",
     "torch==2.6.0 ; sys_platform == 'linux'",
     # transformers 5 exige torch >= 2.5 : impossible sur le Mac Intel, donc
@@ -46,21 +55,9 @@ dev = [
 
 [tool.uv]
 python-preference = "only-managed"
-# Resolution restreinte aux deux seules plateformes du projet : le lock reste
-# petit et aucune plateforme exotique ne peut faire echouer la resolution.
-environments = [
-    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "sys_platform == 'linux' and platform_machine == 'x86_64'",
-]
-
-# Les wheels CUDA ne sont pas sur PyPI. Index declare "explicit" : il n'est
-# consulte que pour les paquets qui le designent nommement ci-dessous.
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true
-
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cu126", marker = "sys_platform == 'linux'" },
-]
+#
+# AVERTISSEMENT - ne pas ajouter de cle `environments` ici. Teste le
+# 2026-10-12 : restreindre les environnements reduit le lock de 454 Ko a
+# 189 Ko et n'a pas resolu le probleme CUDA ; c'est une optimisation sans
+# benefice qui masque la resolution reelle.
+#
