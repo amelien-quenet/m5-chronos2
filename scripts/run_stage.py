@@ -427,6 +427,49 @@ def stage_finetune_predict(study: Study) -> list[Path]:
     return paths
 
 
+def stage_origin_sweep(study: Study) -> list[Path]:
+    """Chronos-2 vanilla a 24 origines espacees de 7 jours, en reculant depuis la validation.
+
+    Matiere premiere de la section 1 du dernier chapitre : la difficulte de prevision
+    est-elle une propriete de la serie, ou de la semaine ? Il faut pour y repondre une
+    erreur par couple (serie, origine), donc autant de previsions qu'il y a d'origines.
+
+    Trois choix, tous dictes par l'honnetete de la mesure :
+
+    - **modele zero-shot, pas le meilleur modele.** Le modele final est un raccord
+      impliquant un checkpoint LoRA entraine sur l'historique de l'origine de test.
+      Le promener vers le passe lui ferait voir le futur de chaque fenetre anterieure,
+      et re-fine-tuner 24 fois n'est pas finançable. On prend donc le modele brut a la
+      longueur de contexte retenue pour les jours 1-7, sur les 7 jours que ce segment
+      possede.
+    - **origine de validation comme point de depart**, pas celle de test : c'est un
+      diagnostic, il n'a aucune raison de lire la fenetre du benchmark final.
+    - **pas de recouvrement** : les origines sont espacees de 7 jours et seuls les 7
+      premiers jours sont notes, donc aucun jour n'est note deux fois et
+      l'autocovariance a l'ordre 1 entre origines n'est pas un artefact de
+      recouvrement.
+
+    La prevision reste a l'horizon standard de 28 jours -- identique a tout le reste de
+    l'etude, et le cout est le meme -- seuls les 7 premiers jours sont notes, par
+    `persistence.cell_wql`.
+    """
+    from m5_chronos2.persistence import N_ORIGINS, SEGMENT_DAYS, origin_grid, sweep_context
+
+    context = int(study.choice["early_context"])
+    origins = origin_grid(study.validation_origin, N_ORIGINS, SEGMENT_DAYS)
+    print(f"  {len(origins)} origines, pas de {SEGMENT_DAYS} jours, contexte {context}")
+    print(f"  de {origins[0]} a {origins[-1]}")
+
+    paths = []
+    for origin in origins:
+        path = experiment_path(f"origin_sweep_ctx{context}_origin{origin}", study.name)
+        cached(path, lambda origin=origin: forecast(
+            sweep_context(study.sales, origin), origin,
+            context_length=context, device=study.device))
+        paths.append(path)
+    return paths
+
+
 def make_stage_finetune_test(contexts: list[int] | None):
     def stage_finetune_test(study: Study) -> list[Path]:
         """Tout ce dont la section 4 du notebook 08 a besoin a l'origine de TEST.
@@ -506,6 +549,9 @@ def build_registry(finetune_contexts: list[int] | None) -> dict[str, Stage]:
               needs_gpu=True, cost="heavy", requires=["finetune"]),
         Stage("finetune_test", "origine de test : vanilla + re-fine-tune", make_stage_finetune_test(finetune_contexts),
               needs_gpu=True, cost="heavy", note="exige --finetune-context"),
+        Stage("origin_sweep", "24 origines vanilla, pas de 7 jours", stage_origin_sweep,
+              needs_gpu=True, cost="heavy",
+              note="~24 x 4 s GPU ; exige context_choice.json ; pour le notebook 09"),
     ]}
 
 
