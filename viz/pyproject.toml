@@ -1,0 +1,26 @@
+[project]
+name = "manim-project"
+version = "0.1.0"
+description = "The weekly-shape embedding, animated"
+requires-python = ">=3.12"
+dependencies = [
+    "manim>=0.21.0",
+    # scene_weekly.py reads its three parquets with polars. No pyarrow needed:
+    # polars reads parquet natively.
+    "polars>=1.0",
+]
+
+# A *virtual* project: uv installs the dependencies into .venv and builds nothing.
+#
+# This line is load-bearing, and it is the fix for `Failed to spawn: manim`.
+# `src/manim/__init__.py` is still here from `uv init` -- a local package literally
+# named `manim`, whose `main()` prints "Hello from manim!". Treated as a package to
+# build, this project installs that stub OVER the real manim library and takes the
+# `manim` console script with it. The symptom is either no `manim` command at all or
+# one that greets you instead of rendering.
+#
+# `package = false` makes uv ignore `src/` entirely. Deleting `src/` and the stray
+# `pyproject.tomles` (a half-written duplicate, not read by anything) is still worth
+# doing; this flag makes them inert until then.
+[tool.uv]
+package = false
