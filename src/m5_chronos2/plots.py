@@ -150,6 +150,48 @@ def plot_change_bars(ax, table, metric, label_column="model"):
                 ha="left" if value >= 0 else "right", color=TEXT_COLOR, fontsize=8)
 
 
+def plot_shape_vs_alpha(stats, weekday_names=None, figsize=(11, 3.4)):
+    """The permutation null against the observed increment, plus the per-weekday ranks.
+
+    `stats` is what `persistence.shape_explains_alpha` returns, and it is the only input:
+    the figure cannot drift out of step with the population the test was run on, which is
+    the sub-panel of series carrying both a panel row and a weekly shape.
+    """
+    if weekday_names is None:
+        weekday_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize,
+                             gridspec_kw={"width_ratios": [1.1, 1]})
+
+    ax = axes[0]
+    ax.hist(stats["null_increments"], bins=30, color=GRID_COLOR,
+            label="shape shuffled within volume strata")
+    ax.axvline(stats["increment"], color=MAIN_COLOR, linewidth=2)
+    ax.text(stats["increment"], ax.get_ylim()[1] * 0.92, " observed ",
+            ha="left", color=MAIN_COLOR, fontsize=9)
+    if stats.get("null_p95") is not None:
+        ax.axvline(stats["null_p95"], color=MUTED_TEXT_COLOR, linestyle="--", linewidth=1)
+        ax.text(stats["null_p95"], ax.get_ylim()[1] * 0.60, " null 95th ",
+                ha="left", va="center", color=MUTED_TEXT_COLOR, fontsize=8)
+    ax.set_xlabel("share of the stable alpha variance that shape adds")
+    ax.set_ylabel("permutations")
+    ax.legend(fontsize=8, loc="upper right")
+
+    # Which weekday, if any, tracks difficulty. Descriptive only: the test is joint, and
+    # these correlations are taken before volume is removed.
+    ax = axes[1]
+    ranks = stats["spearman_per_weekday"]
+    ax.bar(range(len(ranks)), ranks, color=MAIN_COLOR, width=0.6)
+    ax.axhline(0, color=MUTED_TEXT_COLOR, linewidth=1)
+    ax.set_xticks(range(len(ranks)))
+    ax.set_xticklabels(weekday_names[:len(ranks)])
+    ax.set_ylabel("Spearman with alpha")
+    ax.set_title(f"raw, before volume is removed ({stats['n_series']} series)",
+                 loc="left", fontsize=9)
+    fig.tight_layout()
+    return fig, axes
+
+
 def plot_context_sweep(axes, sweep, metrics, colormap="Blues"):
     """The context-length sweep: per metric, one line per context length, x = horizon bucket.
 

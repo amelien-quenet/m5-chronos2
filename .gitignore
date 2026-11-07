@@ -9,6 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
+# Data and results travel by rsync, not by git.
 data/
-artifacts/viz/media/
+artifacts/
+
+# Manim's intermediate renders: only the final mp4 is kept, and it is committed
+# into the blog's post folder, not here.
+viz/media/
 viz/.venv/

@@ -54,8 +54,8 @@ from m5_chronos2.metrics import QUANTILE_LEVELS, add_horizon, quantile_loss
 # therefore both the scored window and the spacing between origins.
 SEGMENT_DAYS = 7
 
-# 24 origins: the number the original study used, and what 7-day steps allow here
-# without the earliest origin running short of context.
+# 24 origins: what 7-day steps allow over the available history without the earliest
+# origin running short of context.
 N_ORIGINS = 24
 
 # Same as the scoring protocol of notebook 03.
@@ -493,13 +493,347 @@ def transient_ratio(panel: Panel, result: Decomposition) -> np.ndarray:
     return (eps - predicted) ** 2 / floor
 
 
+# --- Is the stable part anything more than volume? ----------------------------------
+
+def series_noise(panel: Panel) -> np.ndarray:
+    """Per-series measurement variance of one cell, from that series' own two halves.
+
+    `_noise_variance` pools every cell into a single number, which is what the variance
+    budget needs. Here the number is wanted **per series**, because the sampling noise of
+    a short window is strongly volume-dependent: a window selling three units carries far
+    more of it than one selling three hundred. Since `alpha_f` is a mean of noisy cells,
+    low-volume series have theirs inflated *more* than high-volume ones -- a bias that
+    differs per series, which the global adjustment of `decompose` cannot remove.
+
+    A series whose own noise is not estimable (fewer than two origins with a sale in both
+    halves of the window) falls back to the pooled value rather than to zero, which would
+    claim its `alpha_f` is measured perfectly.
+    """
+    pooled, _ = _noise_variance(panel.odd, panel.even)
+    noise = np.full(panel.x.shape[0], pooled, dtype=float)
+    for i in range(panel.x.shape[0]):
+        value, n_valid = _noise_variance(panel.odd[i], panel.even[i])
+        if n_valid >= 2:
+            noise[i] = value
+    return noise
+
+
+def _explained_variance(y: np.ndarray, columns: np.ndarray) -> float:
+    """Variance of `y` explained by a least-squares fit on `columns`, bias-adjusted.
+
+    Two points matter for reading the result.
+
+    **Measurement error in `y` does not bias this.** `y` here is `alpha_f`, which carries
+    noise of its own, but noise in the *dependent* variable leaves `cov(y, z)` and the
+    slope unbiased -- it inflates `var(y)`, which is corrected separately. So the explained
+    variance needs no errors-in-variables treatment; only the denominator does.
+
+    **A least-squares fit explains some variance by construction**, about
+    `k * var(residual) / n` of it. That is subtracted here, the same adjustment an adjusted
+    R-squared makes, so a covariate that carries nothing scores about zero rather than a
+    small positive number.
+    """
+    n = len(y)
+    k = columns.shape[1]
+    design = np.column_stack([np.ones(n), columns])
+    coefficients, *_ = np.linalg.lstsq(design, y, rcond=None)
+    fitted = design @ coefficients
+    explained = float(np.var(fitted))
+    residual = float(np.var(y)) - explained
+    if n - k - 1 > 0:
+        explained -= k * residual / (n - k - 1)
+    return max(explained, 0.0)
+
+
+def explain_alpha(panel: Panel, result: Decomposition,
+                  covariates: dict[str, np.ndarray]) -> dict:
+    """What is left of the stable difficulty once its own noise and `covariates` are out.
+
+    A large series share is the start of an argument, not the end of one. WQL is
+    scale-free, so a dependence on volume would not be an artefact of units -- it would be
+    a statement about predictability: an item selling a third of a unit a day has an
+    irreducibly high relative error, and that is a permanent property of the item. If
+    `alpha_f` is a function of volume then "group the series by difficulty" means "bucket
+    them by volume", which needs no clustering and which the forecaster can read off the
+    history unaided. What survives is the part a grouping would have to earn its keep on.
+
+    Three shares are reported, all as a fraction of the panel's total sum of squares so
+    they sit on the same axis as `Decomposition.shares()`:
+
+    - `share_raw` -- `ss_frame / total`, identical to `shares()["series"]`.
+    - `share_corrected_global` -- `shares()["series_adjusted"]`, taken from `result` so
+      the two agree by construction. It subtracts the *whole* interaction variance from
+      every series equally.
+    - `share_corrected` -- subtracts each series' **own measured noise** instead. It is
+      therefore the larger of the two: it removes only what the odd/even halves prove is
+      measurement error, and leaves real week-to-week movement inside `alpha_f`.
+
+    `per_covariate[name]` gives the Spearman correlation with `alpha_f`, the share of the
+    noise-corrected `alpha` variance that covariate explains (`r2`), and the share of the
+    budget still on the series after removing it. `all_covariates` does the same with every
+    covariate at once.
+
+    **One bias this cannot remove, and the control that exposes it.** Subtracting variances
+    fixes an inflated spread; it does not fix an inflated *level*. `x` is a log, so a
+    noisier estimate of the same underlying error need not have the same expectation, and
+    the noise level is itself a function of volume -- which could put a volume slope into
+    `alpha_f` that no variance correction touches. There is no clean closed form for it
+    here, so the per-series noise is added to `per_covariate` as `"noise level (control)"`.
+    If `alpha_f` correlates with its own measurement noise about as strongly as it
+    correlates with volume, the volume result is not safe to read, and the panel needs
+    longer windows rather than a better estimator.
+    """
+    alpha = result.alpha
+    n_series, n_origins = panel.shape
+    if alpha.shape != (n_series,):
+        raise ValueError("the decomposition does not match the panel it is being read on")
+
+    cell_noise = series_noise(panel)
+    alpha_noise = cell_noise / n_origins          # the noise carried by alpha_f itself
+
+    var_hat = float(np.mean(alpha ** 2))          # alpha is mean-centred by construction
+    var_noise = float(np.mean(alpha_noise))
+    var_alpha = max(var_hat - var_noise, 0.0)
+
+    def as_share(variance: float) -> float:
+        return n_series * n_origins * variance / result.total
+
+    def removing(columns: np.ndarray) -> dict:
+        explained = _explained_variance(alpha, columns)
+        return {
+            "r2": explained / var_alpha if var_alpha > 0 else float("nan"),
+            "share_corrected": as_share(max(var_alpha - explained, 0.0)),
+            "explained_variance": explained,
+        }
+
+    prepared: dict[str, np.ndarray] = {}
+    for name, values in covariates.items():
+        column = np.asarray(values, dtype=float)
+        if column.shape != alpha.shape:
+            raise ValueError(f"covariate {name!r} has {column.shape}, expected {alpha.shape}")
+        if not np.isfinite(column).all():
+            raise ValueError(f"covariate {name!r} has missing or infinite values")
+        prepared[name] = column
+
+    per_covariate = {}
+    for name, column in prepared.items():
+        per_covariate[name] = {"spearman": spearman(alpha, column),
+                               **removing(column[:, None])}
+
+    control = np.log(np.maximum(cell_noise, 1e-12))
+    if "noise level (control)" not in per_covariate and np.ptp(control) > 0:
+        per_covariate["noise level (control)"] = {"spearman": spearman(alpha, control),
+                                                  **removing(control[:, None])}
+
+    all_covariates = (removing(np.column_stack(list(prepared.values())))
+                      if prepared else {"r2": float("nan"),
+                                        "share_corrected": as_share(var_alpha),
+                                        "explained_variance": 0.0})
+
+    return {
+        "share_raw": result.ss_frame / result.total,
+        "share_corrected_global": result.ss_frame_adjusted / result.total,
+        "share_corrected": as_share(var_alpha),
+        "per_covariate": per_covariate,
+        "all_covariates": all_covariates,
+        "series_noise": cell_noise,
+        "var_alpha_hat": var_hat,
+        "var_alpha": var_alpha,
+        "var_noise": var_noise,
+        "n_series": n_series,
+    }
+
+
+def select_series(panel: Panel, keep: np.ndarray) -> Panel:
+    """A sub-panel of the series `keep` selects, for a question only some of them can answer.
+
+    Needed because the panel's membership rule and a shape's membership rule are different
+    rules. A series joins the panel by being scorable at every origin, which asks for 56
+    on-sale days before the first one; a weekly shape asks for `min_weeks` *complete* weeks.
+    An item that launched a few months before the panel starts satisfies the first and not
+    the second, so a test that needs both has a smaller population than the panel -- and
+    that population has to be named and counted rather than assumed away.
+
+    The sub-panel is a real panel: re-decompose it rather than reusing the full panel's
+    `alpha`, so `mu`, the origin effects and the variance budget are all computed on the
+    series the question is actually asked about. `dropped` records what the selection cost.
+    """
+    keep = np.asarray(keep)
+    n_series = panel.x.shape[0]
+    if keep.dtype == bool:
+        if keep.shape != (n_series,):
+            raise ValueError(f"a boolean mask must have {n_series} entries, got {keep.shape}")
+        rows = np.flatnonzero(keep)
+    else:
+        rows = keep.astype(int)
+        if rows.size and (rows.min() < 0 or rows.max() >= n_series):
+            raise ValueError("a row index is outside the panel")
+    if rows.size == 0:
+        raise ValueError("the selection is empty")
+
+    return Panel(
+        x=panel.x[rows], odd=panel.odd[rows], even=panel.even[rows],
+        ids=[panel.ids[i] for i in rows], origins=panel.origins,
+        dropped={**panel.dropped,
+                 "series_before_selection": n_series,
+                 "series_selected": int(rows.size)},
+    )
+
+
+def shape_explains_alpha(
+    panel: Panel,
+    result: Decomposition,
+    shapes: np.ndarray,
+    covariates: dict[str, np.ndarray],
+    *,
+    shape_reliability: float | None = None,
+    strata_from: str | None = None,
+    n_strata: int = 10,
+    n_permutations: int = 500,
+    seed: int = 0,
+) -> dict:
+    """Does the weekly shape carry any of the difficulty that volume does not explain?
+
+    `explain_alpha` answers what the stable item effect *is*; on this panel most of it is
+    volume. This answers the question that follows, and it is the one that decides whether
+    a clustering of the weekly shape is worth repairing: **once volume and sparsity are
+    out, does an item's position in the 7-dimensional shape space predict anything about
+    how hard it is to forecast?** If it does not, no verdict about types in that space --
+    however well measured -- can reach the difficulty that is left.
+
+    `shapes` is `(n_series, 7)`, one row per entry of `panel.ids`, in that order; aligning
+    them is the caller's job and a mismatch raises. `covariates` is the nuisance block, the
+    same one `explain_alpha` is given. Both should be built from history **before the first
+    origin of the panel**, so they are prior properties of the item rather than summaries
+    of the windows being scored.
+
+    Three things make the answer readable rather than merely computed.
+
+    **The shape vector sums to 1**, so its seven coordinates are collinear with the
+    regression's own intercept. Six are used and the seventh is implied; which one is
+    dropped does not change the fitted subspace.
+
+    **Six extra regressors explain variance by construction** -- about `k/n` of what is
+    left, which is 4% here. `_explained_variance` removes that in expectation, and a
+    **stratified permutation test** gives the distribution rather than the expectation.
+    The permutation shuffles the shape rows *within strata of `strata_from`* (volume, in
+    practice), so the null keeps whatever relationship shape has with volume and destroys
+    only its link to `alpha_f`. Permuting freely instead would break the shape-volume
+    relationship too, making the null easier to beat and biasing the test toward finding
+    an effect -- the same mistake that makes an over-diffuse continuum null unreadable.
+
+    **Shape is itself measured with error**, and error in a *predictor* attenuates the
+    variance it explains toward zero -- the mirror image of the attenuation in
+    `rank_agreement`. So a null result here is confounded with the reliability of the
+    shape. Pass `shape_reliability` (the split-half reliability of the pooled profile, on
+    these series) and `increment_disattenuated` reports the increment divided by it: an
+    approximate upper bound on what a perfectly measured shape could contribute. Dividing
+    a multivariate increment by a single scalar is an approximation, and it is the right
+    way round -- it can only make a negative result weaker, never stronger. It can also
+    exceed 1 when the increment is large relative to the reliability, which means the
+    scalar approximation has broken down rather than that shape explains everything.
+
+    One reading note on the output: `share_after_shape` can come out *above*
+    `share_baseline`. That is not a bug. The explained variance is adjusted for the
+    degrees of freedom the six shape columns cost, so a shape block that contributes less
+    than its own degrees of freedom leaves less explained than the nuisance block alone --
+    and a share that goes up when shape is added is itself the answer to the question.
+    """
+    alpha = result.alpha
+    n_series, n_origins = panel.shape
+    shapes = np.asarray(shapes, dtype=float)
+    if shapes.shape[0] != n_series:
+        raise ValueError(
+            f"shapes has {shapes.shape[0]} rows, the panel has {n_series}: align the "
+            "shape table on panel.ids before calling this"
+        )
+    if not np.isfinite(shapes).all():
+        raise ValueError("the shape matrix has missing or infinite values")
+    if n_permutations < 1:
+        raise ValueError("n_permutations must be at least 1")
+
+    nuisance_names = list(covariates)
+    nuisance = np.column_stack([np.asarray(covariates[name], dtype=float)
+                                for name in nuisance_names]) if covariates else None
+    if nuisance is not None:
+        if nuisance.shape[0] != n_series:
+            raise ValueError("a covariate does not match the panel")
+        if not np.isfinite(nuisance).all():
+            raise ValueError("a covariate has missing or infinite values")
+
+    # The seventh coordinate is implied by the other six and the intercept.
+    shape_columns = shapes[:, :-1]
+
+    var_alpha = max(float(np.mean(alpha ** 2)) - float(np.mean(series_noise(panel)))
+                    / n_origins, 0.0)
+    if var_alpha <= 0:
+        raise ValueError("no stable item effect is left to explain once noise is removed")
+
+    def explained(columns: np.ndarray | None) -> float:
+        if columns is None or columns.shape[1] == 0:
+            return 0.0
+        return _explained_variance(alpha, columns)
+
+    def with_shape(block: np.ndarray) -> np.ndarray:
+        return block if nuisance is None else np.column_stack([nuisance, block])
+
+    explained_baseline = explained(nuisance)
+    explained_full = explained(with_shape(shape_columns))
+    increment = max(explained_full - explained_baseline, 0.0) / var_alpha
+
+    # Strata that keep the shape-volume relationship intact under permutation.
+    if strata_from is not None:
+        if strata_from not in covariates:
+            raise ValueError(f"strata_from={strata_from!r} is not one of the covariates")
+        key = np.asarray(covariates[strata_from], dtype=float)
+        ranks = np.argsort(np.argsort(key))
+        strata = np.minimum(ranks * n_strata // n_series, n_strata - 1)
+    else:
+        strata = np.zeros(n_series, dtype=int)
+
+    generator = np.random.default_rng(seed)
+    null = np.empty(n_permutations)
+    for draw in range(n_permutations):
+        order = np.arange(n_series)
+        for stratum in np.unique(strata):
+            members = np.flatnonzero(strata == stratum)
+            order[members] = generator.permutation(members)
+        shuffled = explained(with_shape(shape_columns[order]))
+        null[draw] = max(shuffled - explained_baseline, 0.0) / var_alpha
+
+    n_at_least = int(np.sum(null >= increment))
+    return {
+        "n_series": n_series,
+        "n_shape_columns": int(shape_columns.shape[1]),
+        "nuisance": nuisance_names,
+        "share_baseline": n_series * n_origins
+                          * max(var_alpha - explained_baseline, 0.0) / result.total,
+        "share_after_shape": n_series * n_origins
+                             * max(var_alpha - explained_full, 0.0) / result.total,
+        "increment": increment,
+        "increment_disattenuated": (increment / shape_reliability
+                                    if shape_reliability else None),
+        "shape_reliability": shape_reliability,
+        "null_median": float(np.median(null)),
+        "null_p95": float(np.percentile(null, 95)),
+        "p_value": (1 + n_at_least) / (1 + n_permutations),
+        "p_value_floor": 1 / (1 + n_permutations),
+        "beat_all_nulls": n_at_least == 0,
+        "n_permutations": n_permutations,
+        "n_strata": int(len(np.unique(strata))),
+        "null_increments": null,
+        "spearman_per_weekday": [spearman(alpha, shapes[:, d])
+                                 for d in range(shapes.shape[1])],
+    }
+
+
 # --- The verdict, written down so it cannot be read wishfully -----------------------
 
 def verdict(result: Decomposition, ranks: dict,
             intervals: dict[str, tuple[float, float]] | None = None) -> str:
     """The reading rule, fixed in advance.
 
-    Thresholds from the original study: a Spearman of 0.6 or more and a third of the
+    Thresholds from the published literature: a Spearman of 0.6 or more and a third of the
     variance on the series means a static grouping has something real to hold; 0.3 or
     less, or under a fifth of the variance, means it has not. Between the two, the
     honest answer is "partial, weigh it against the complexity".

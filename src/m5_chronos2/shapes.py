@@ -10,10 +10,9 @@ into one explained fact.
 The object being clustered
 --------------------------
 Not the level of a series -- that would sort items by how much they sell -- but its
-**shape**: the share of a week that falls on each day of the week. The original study
-worked on hourly data and used a 24-dimensional hour-of-day profile; M5 is daily, so
-the strict analogue swaps "day/hour" for "week/weekday" and the profile has 7
-dimensions. For a series `f` observed over weeks `w = 1..W`:
+**shape**: the share of a week that falls on each day of the week. M5 is daily, so the
+natural period is the week and the profile has 7 dimensions, one per weekday. For a
+series `i` observed over weeks `w = 1..W`:
 
     alpha[w, d] = y[w, d] / sum_d y[w, d]                   each week normalised to 1
     v[d]        = sum_w alpha[w, d] / sum_d sum_w alpha[w, d]
@@ -36,8 +35,8 @@ a finding from a plot, and each can kill the next:
   which absence of evidence is not evidence of absence.
 - **step 2** -- does the pipeline hallucinate structure? Run it on a continuum fitted
   to the real cloud's own geometry, and report an empirical p-value.
-- **step 4** -- is the metric measuring shape, or clock offset? (Numbered as in the
-  playbook; steps 3, 5 and 6 are out of scope and named in the notebook.)
+- **step 4** -- is the metric measuring shape, or calendar offset? (The numbering is the
+  full audit's; steps 3, 5 and 6 are out of scope and named in the notebook.)
 
 As in `persistence.py`, the polars half is thin and the statistics are numpy, so every
 estimator here can be checked against data whose answer is known.
@@ -94,8 +93,8 @@ def weekly_shapes(sales: pl.DataFrame, last_day=None, min_weeks: int = 8,
                   statistic: str = "mean", week_start: int = 1) -> pl.DataFrame:
     """One 7-dimensional shape per series: 'id', 'v0'..'v6', 'n_weeks', 'total'.
 
-    `statistic` selects how the weekly shares are pooled. 'mean' is the construction of
-    the report, and the two normalisations then collapse to a single division by the
+    `statistic` selects how the weekly shares are pooled. 'mean' is the construction used
+    throughout, and the two normalisations then collapse to a single division by the
     number of weeks. 'median' is the more robust variant -- worth running once as a
     check, since M5 weeks are bursty -- but a vector of medians does not sum to 1, so it
     is renormalised afterwards and is no longer exactly the stated construction.
@@ -114,7 +113,11 @@ def weekly_shapes(sales: pl.DataFrame, last_day=None, min_weeks: int = 8,
         .sort("id", "weekday")
     )
     wide = table.pivot(on="weekday", index="id", values="v").sort("id")
+    # pivot orders its columns by first appearance, not by value. The rename carries the
+    # weekday in the name, so selecting by name afterwards puts Monday first whatever
+    # order the pivot chose -- relying on that order would be a silent day-shuffling bug.
     wide.columns = ["id"] + [f"v{int(name)}" for name in wide.columns[1:]]
+    wide = wide.select(["id"] + [f"v{d}" for d in range(WEEKDAYS)])
 
     counts = table.group_by("id").agg(
         pl.col("n_weeks").max().alias("n_weeks"), pl.col("total").sum().alias("total"))
@@ -331,9 +334,13 @@ def separation(x: np.ndarray, labels: np.ndarray) -> float:
 
 @dataclass
 class Simulation:
-    shapes: np.ndarray          # n_series x 7, pooled profiles
+    shapes: np.ndarray          # n_series x 7, the profiles after pooling redrawn weeks
     labels: np.ndarray          # n_series, the planted archetype (all zeros for a null)
     separation: float
+    # The latent profile each series' weeks were drawn from, before counting noise.
+    # `shapes` is what an analyst would measure; this is what was planted. The video's
+    # generator needs it to draw a daily series consistent with a series' own shape.
+    profiles: np.ndarray | None = None
 
 
 def _resample_weeks(profiles: np.ndarray, totals: list[np.ndarray],
@@ -347,12 +354,14 @@ def _resample_weeks(profiles: np.ndarray, totals: list[np.ndarray],
     for profile, week_totals in zip(profiles, totals):
         profile = np.clip(profile, 1e-9, None)
         profile = profile / profile.sum()
-        weeks = []
-        for total in week_totals:
-            counts = generator.multinomial(max(int(round(total)), 1), profile)
-            if counts.sum() > 0:
-                weeks.append(counts / counts.sum())
-        pooled.append(np.mean(weeks, axis=0) if weeks else profile)
+        # One call per series, not one per week: `multinomial` broadcasts `n`, and the
+        # audit draws this a few hundred thousand times across its simulations.
+        counts = generator.multinomial(np.maximum(np.rint(week_totals), 1).astype(np.int64),
+                                       profile)
+        week_sums = counts.sum(axis=1)
+        usable = week_sums > 0
+        pooled.append((counts[usable] / week_sums[usable, None]).mean(axis=0)
+                      if usable.any() else profile)
     return np.array(pooled)
 
 
@@ -394,7 +403,8 @@ def positive_control(base_profile: np.ndarray, totals: list[np.ndarray], n_clust
     profiles = np.exp(base + offsets + noise)
     profiles = profiles / profiles.sum(axis=1, keepdims=True)
     pooled = _resample_weeks(profiles, totals, generator)
-    return Simulation(shapes=pooled, labels=labels, separation=separation(pooled, labels))
+    return Simulation(shapes=pooled, labels=labels, profiles=profiles,
+                      separation=separation(pooled, labels))
 
 
 # --- Step 2: the null that counts -----------------------------------------------------
@@ -444,7 +454,8 @@ def fitted_null(shapes: np.ndarray, totals: list[np.ndarray], n_neighbours: int 
     profiles = np.exp(centre + manifold + drawn)
     profiles = profiles / profiles.sum(axis=1, keepdims=True)
     pooled = _resample_weeks(profiles, totals, generator)
-    return Simulation(shapes=pooled, labels=np.zeros(len(shapes), dtype=int), separation=0.0)
+    return Simulation(shapes=pooled, labels=np.zeros(len(shapes), dtype=int),
+                      profiles=profiles, separation=0.0)
 
 
 def null_envelope(shapes: np.ndarray, totals: list[np.ndarray], n_nulls: int = 20,
@@ -533,21 +544,39 @@ def geometry_comparison(real: np.ndarray, null: np.ndarray, seed: int = 0) -> di
 
 # --- Step 4: is the metric measuring shape, or the position of the week? --------------
 
-def _shift_statistics(shapes: np.ndarray) -> dict:
-    n_series = len(shapes)
-    best_shift, gains = [], []
-    for i in range(n_series):
-        for j in range(i + 1, n_series):
-            base = float(np.linalg.norm(shapes[i] - shapes[j]))
-            if base == 0:
-                continue
-            distances = [float(np.linalg.norm(np.roll(shapes[i], tau) - shapes[j]))
-                         for tau in range(WEEKDAYS)]
-            tau = int(np.argmin(distances))
-            best_shift.append(tau if tau <= WEEKDAYS // 2 else tau - WEEKDAYS)
-            gains.append(1 - (min(distances) / base) ** 2)
+def _pairwise(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    squared = (np.sum(a ** 2, axis=1)[:, None] + np.sum(b ** 2, axis=1)[None, :]
+               - 2 * a @ b.T)
+    return np.sqrt(np.maximum(squared, 0.0))
 
-    best_shift, gains = np.array(best_shift), np.array(gains)
+
+def _shift_statistics(shapes: np.ndarray) -> dict:
+    """One distance matrix per rotation, rather than a loop over pairs.
+
+    500 series is 125,000 pairs and 7 rotations each; done pair by pair that is a
+    million tiny numpy calls. Seven 500x500 matrices is the same arithmetic in a form
+    BLAS can do at once.
+    """
+    n_series = len(shapes)
+    rows, columns = np.triu_indices(n_series, k=1)
+
+    # distances[tau, pair]: rotate the lower-indexed series, which is the convention the
+    # docstring describes. d_ij(tau) = d_ji(-tau), so one value per unordered pair is
+    # exact rather than a choice.
+    distances = np.stack([
+        _pairwise(np.roll(shapes, tau, axis=1), shapes)[rows, columns]
+        for tau in range(WEEKDAYS)
+    ])
+
+    base = distances[0]
+    keep = base > 0
+    distances, base = distances[:, keep], base[keep]
+
+    tau_star = np.argmin(distances, axis=0)           # lowest tau wins ties
+    best = distances[tau_star, np.arange(distances.shape[1])]
+    best_shift = np.where(tau_star <= WEEKDAYS // 2, tau_star, tau_star - WEEKDAYS)
+    gains = 1 - (best / base) ** 2
+
     return {
         "shift": best_shift,
         "gain": gains,
@@ -578,8 +607,8 @@ def shift_test(shapes: np.ndarray, seed: int = 0) -> dict:
     arbitrary convention.
 
     **A week has only 7 rotations, so `tau* = 0` happens 14% of the time by luck alone.**
-    The original study worked on 24 hourly positions, where the chance level is 4% and
-    the raw share could be read directly; here it cannot. So the test also runs itself on
+    With only 7 positions the raw share cannot be read directly against a chance level
+    the way it could on a finer grid. So the test also runs itself on
     a copy of the data with every series randomly rotated -- same cloud, alignment
     destroyed -- and the comparison between the two is the result. The absolute number is
     not.
@@ -605,13 +634,26 @@ def shift_test(shapes: np.ndarray, seed: int = 0) -> dict:
 # --- Display only ----------------------------------------------------------------------
 
 def umap_layout(x: np.ndarray, seed: int = 0, n_neighbors: int = 15,
-                min_dist: float = 0.1) -> np.ndarray:
-    """2-D layout for the figures and for the video. Display only: no conclusion in this
-    module or in notebook 10 rests on it, because a projection can separate what is not
-    separated and merge what is. The decisions are taken in the full 7 dimensions.
+                min_dist: float = 0.1) -> tuple[np.ndarray, str]:
+    """2-D layout for the figures and for the video, with the method it used.
+
+    Display only: no conclusion in this module or in notebook 10 rests on it, because a
+    projection can separate what is not separated and merge what is. Every decision is
+    taken in the full 7 dimensions.
+
+    Returns the method's name alongside the coordinates so a figure can label itself. If
+    `umap-learn` is not installed the fallback is PCA, which is a *different* picture --
+    linear, global, and much worse at showing local structure -- so the caller is told
+    rather than silently handed something else.
     """
-    import umap
+    try:
+        import umap
+    except ImportError:
+        print("umap-learn is not installed; falling back to PCA for this figure only.\n"
+              "  uv add umap-learn   (then commit uv.lock -- never delete it)")
+        from sklearn.decomposition import PCA
+        return PCA(n_components=2, random_state=seed).fit_transform(x), "PCA"
 
     reducer = umap.UMAP(n_components=2, random_state=seed, n_neighbors=n_neighbors,
                         min_dist=min_dist)
-    return reducer.fit_transform(x)
+    return reducer.fit_transform(x), "UMAP"
