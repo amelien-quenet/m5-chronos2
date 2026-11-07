@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 #
-# Lancer une etape sur la tour depuis le Mac, et rapatrier les resultats.
+# Run a stage on the GPU tower from the Mac, and bring the results back.
 #
-#   ./scripts/remote.sh check                      etat de la tour
-#   ./scripts/remote.sh run --all                  lance, detache, rend la main
+#   ./scripts/remote.sh check                      state of the tower
+#   ./scripts/remote.sh run --all                  launch, detach, return the prompt
 #   ./scripts/remote.sh run --stages finetune
-#   ./scripts/remote.sh log                        suit le journal du run en cours
-#   ./scripts/remote.sh status                     le run tourne-t-il encore ?
-#   ./scripts/remote.sh stop                       arrete le run
-#   ./scripts/remote.sh pull                       rapatrie artifacts/ -> Mac
-#   ./scripts/remote.sh push                       envoie artifacts/ -> tour
+#   ./scripts/remote.sh log                        follow the running job's log
+#   ./scripts/remote.sh status                     is the job still running?
+#   ./scripts/remote.sh stop                       stop the job
+#   ./scripts/remote.sh pull                       bring artifacts/ back to the Mac
+#   ./scripts/remote.sh push                       send artifacts/ to the tower
 #
-# Le calcul tourne dans tmux cote tour : fermer le capot du Mac, perdre le Wi-Fi ou
-# interrompre ce script ne l'arrete pas. `run` rend la main immediatement.
+# The computation runs inside tmux on the tower: closing the Mac's lid, losing Wi-Fi or
+# interrupting this script does not stop it. `run` returns the prompt immediately.
 #
-# Tout argument apres `run` est passe tel quel a scripts/run_stage.py.
+# Any argument after `run` is passed through to scripts/run_stage.py unchanged.
 
 set -euo pipefail
 
-HOST="gpu"                 # alias de ~/.ssh/config
-REMOTE_DIR="m5-chronos2"   # relatif au home de la tour
-SESSION="m5"               # nom de la session tmux
+HOST="gpu"                 # alias from ~/.ssh/config
+REMOTE_DIR="m5-chronos2"   # relative to the tower's home directory
+SESSION="m5"               # tmux session name
 LOG_DIR="artifacts/logs"
 
 cd "$(dirname "$0")/.."
@@ -28,26 +28,26 @@ cd "$(dirname "$0")/.."
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 die() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 
-# --- La tour repond-elle ? ----------------------------------------------------------
-# C'est la panne recurrente du montage : la redirection de port survit a l'extinction
-# de la machine virtuelle WSL, donc la connexion est acceptee puis coupee. Le message
-# doit nommer la cause, pas renvoyer une erreur reseau.
+# --- Is the tower answering? --------------------------------------------------------
+# This is the setup's recurring failure: the port forward outlives the WSL virtual
+# machine, so the connection is accepted and then dropped. The message has to name the
+# cause rather than hand back a network error.
 check_alive() {
   if ! ssh -o ConnectTimeout=8 -o BatchMode=yes "$HOST" true 2>/dev/null; then
-    die "La tour ne repond pas.
+    die "The tower is not answering.
 
-Dans l'ordre de probabilite :
-  1. la machine virtuelle WSL est arretee -> ouvrir un terminal Ubuntu sur la tour
-     (symptome typique : 'Connection reset by peer' a l'echange de cles) ;
-  2. la session Windows n'est pas ouverte -> la tache qui demarre WSL se declenche
-     a l'ouverture de session ;
-  3. la tour est eteinte ou endormie, ou n'est pas sur le reseau local."
+In order of likelihood:
+  1. the WSL virtual machine is stopped -> open an Ubuntu terminal on the tower
+     (typical symptom: 'Connection reset by peer' during the key exchange);
+  2. nobody is logged in to Windows -> the task that starts WSL is triggered by
+     the logon;
+  3. the tower is off, asleep, or not on the local network."
   fi
 }
 
 cmd_check() {
   check_alive
-  say "tour joignable"
+  say "tower reachable"
   ssh "$HOST" "cd $REMOTE_DIR && git log --oneline -1 && \
     uv run python -c \"
 from m5_chronos2.chronos2 import device_report, get_pipeline, pipeline_dtype
@@ -55,61 +55,61 @@ import json; print(json.dumps(device_report(), default=str))
 print('dtype', pipeline_dtype(get_pipeline()))\""
 }
 
-# --- Le code voyage par git ----------------------------------------------------------
+# --- Code travels by git -------------------------------------------------------------
 sync_code() {
   local dirty
   dirty=$(git status --porcelain -- src scripts pyproject.toml uv.lock)
   if [[ -n "$dirty" ]]; then
-    die "Modifications non committees dans src/, scripts/ ou le pyproject :
+    die "Uncommitted changes in src/, scripts/ or the pyproject:
 
 $dirty
 
-La tour calculerait avec un code anterieur au tien, et l'artifact porterait le
-mauvais commit dans son .meta.json. Committer d'abord."
+The tower would compute with code older than yours, and the artifact would carry the
+wrong commit in its .meta.json. Commit first."
   fi
-  say "push du code"
+  say "pushing code"
   git push --quiet
-  say "pull et sync sur la tour"
+  say "pull and sync on the tower"
   ssh "$HOST" "cd $REMOTE_DIR && git pull --quiet && uv sync --quiet"
   local here there
   here=$(git rev-parse --short HEAD)
   there=$(ssh "$HOST" "cd $REMOTE_DIR && git rev-parse --short HEAD")
-  [[ "$here" == "$there" ]] || die "commits differents : Mac $here, tour $there"
-  say "meme commit des deux cotes : $here"
+  [[ "$here" == "$there" ]] || die "different commits: Mac $here, tower $there"
+  say "same commit on both sides: $here"
 }
 
-# --- Lancer -------------------------------------------------------------------------
+# --- Launch -------------------------------------------------------------------------
 cmd_run() {
-  [[ $# -gt 0 ]] || die "donner les arguments de run_stage.py, par ex. --all"
+  [[ $# -gt 0 ]] || die "pass run_stage.py's arguments, for example --all"
   check_alive
   sync_code
 
   if ssh "$HOST" "tmux has-session -t $SESSION" 2>/dev/null; then
-    die "une session '$SESSION' tourne deja sur la tour.
-  ./scripts/remote.sh log     pour la suivre
-  ./scripts/remote.sh stop    pour l'arreter"
+    die "a '$SESSION' session is already running on the tower.
+  ./scripts/remote.sh log     to follow it
+  ./scripts/remote.sh stop    to stop it"
   fi
 
   local stamp log
   stamp=$(date +%Y%m%d-%H%M%S)
   log="$LOG_DIR/${stamp}.log"
 
-  say "lancement detache : run_stage.py $*"
-  # La session tmux se termine avec la commande : son existence est donc un
-  # signal fiable de "run en cours". La sortie, elle, reste dans le journal.
+  say "detached launch: run_stage.py $*"
+  # The tmux session ends with the command, so its existence is a reliable signal for
+  # "job running". The output itself stays in the log.
   ssh "$HOST" "cd $REMOTE_DIR && mkdir -p $LOG_DIR && \
     tmux new-session -d -s $SESSION \
-    \"uv run python scripts/run_stage.py $* 2>&1 | tee $log; echo '--- termine ---' >> $log\""
+    \"uv run python scripts/run_stage.py $* 2>&1 | tee $log; echo '--- finished ---' >> $log\""
 
   sleep 3
-  ssh "$HOST" "cd $REMOTE_DIR && tail -n 20 $log 2>/dev/null || echo '(journal pas encore ecrit)'"
+  ssh "$HOST" "cd $REMOTE_DIR && tail -n 20 $log 2>/dev/null || echo '(log not written yet)'"
   cat <<EOF
 
-Le calcul tourne sur la tour, detache. Tu peux fermer ce terminal.
+The computation is running on the tower, detached. This terminal can be closed.
 
-  ./scripts/remote.sh log       suivre le journal
-  ./scripts/remote.sh status    toujours en cours ?
-  ./scripts/remote.sh pull      rapatrier les artifacts quand c'est fini
+  ./scripts/remote.sh log       follow the log
+  ./scripts/remote.sh status    still running?
+  ./scripts/remote.sh pull      bring the artifacts back when it is done
 EOF
 }
 
@@ -117,8 +117,8 @@ cmd_log() {
   check_alive
   local log
   log=$(ssh "$HOST" "cd $REMOTE_DIR && ls -t $LOG_DIR/*.log 2>/dev/null | head -1")
-  [[ -n "$log" ]] || die "aucun journal sur la tour"
-  say "journal : $log   (Ctrl-C pour arreter de suivre, le calcul continue)"
+  [[ -n "$log" ]] || die "no log on the tower"
+  say "log: $log   (Ctrl-C stops following; the computation continues)"
   ssh -t "$HOST" "cd $REMOTE_DIR && tail -f $log"
 }
 
@@ -126,15 +126,15 @@ cmd_status() {
   check_alive
   local log
   log=$(ssh "$HOST" "cd $REMOTE_DIR && ls -t $LOG_DIR/*.log 2>/dev/null | head -1")
-  if [[ -z "$log" ]]; then say "aucun journal sur la tour"; return; fi
+  if [[ -z "$log" ]]; then say "no log on the tower"; return; fi
 
-  if ssh "$HOST" "cd $REMOTE_DIR && grep -q -- '--- termine ---' '$log'"; then
-    say "TERMINE   $log"
+  if ssh "$HOST" "cd $REMOTE_DIR && grep -q -- '--- finished ---' '$log'"; then
+    say "FINISHED   $log"
   elif ssh "$HOST" "tmux has-session -t $SESSION" 2>/dev/null; then
-    say "EN COURS  $log"
+    say "RUNNING    $log"
   else
-    # Ni marqueur de fin ni session : le processus est mort sans finir.
-    say "INTERROMPU (ni marqueur de fin, ni session tmux)   $log"
+    # Neither an end marker nor a session: the process died before finishing.
+    say "INTERRUPTED (no end marker, no tmux session)   $log"
   fi
   ssh "$HOST" "cd $REMOTE_DIR && tail -n 8 '$log'"
 }
@@ -142,19 +142,19 @@ cmd_status() {
 cmd_stop() {
   check_alive
   ssh "$HOST" "tmux kill-session -t $SESSION" 2>/dev/null \
-    && say "session arretee ; les artifacts deja ecrits sont conserves" \
-    || say "aucune session a arreter"
+    && say "session stopped; the artifacts already written are kept" \
+    || say "no session to stop"
 }
 
-# --- Les gros fichiers voyagent par rsync -------------------------------------------
-# macOS livre rsync 2.6.9 (2006) : pas de --info=progress2, pas de -h, et les motifs
-# de filtre avec ** y sont hasardeux. On s'en tient a --progress et a des --exclude
-# simples, qui fonctionnent aussi avec un rsync 3.x.
+# --- Large files travel by rsync ----------------------------------------------------
+# macOS ships rsync 2.6.9 (2006): no --info=progress2, no -h, and filter patterns with
+# ** are unreliable there. So this sticks to --progress and plain --exclude patterns,
+# which also work with an rsync 3.x.
 #
-# Les checkpoints Hugging Face intermediaires pesent des centaines de Mo (poids,
-# etat de l'optimiseur, etats de generateurs aleatoires) pour une seule information
-# utile : trainer_state.json, d'ou le notebook 08 tire la courbe de perte. On exclut
-# donc les gros fichiers DANS chaque checkpoint-*, pas le repertoire lui-meme.
+# Intermediate Hugging Face checkpoints weigh hundreds of megabytes (weights, optimiser
+# state, random-generator states) for a single useful piece of information:
+# trainer_state.json, which notebook 08 reads the loss curve from. So the large files
+# INSIDE each checkpoint-* are excluded, not the directory itself.
 RSYNC_OPTS=(
   -az --progress
   "--exclude=checkpoint-*/*.safetensors"
@@ -166,16 +166,16 @@ RSYNC_OPTS=(
 
 cmd_pull() {
   check_alive
-  say "rapatriement artifacts/ depuis la tour"
+  say "pulling artifacts/ from the tower"
   rsync "${RSYNC_OPTS[@]}" "$HOST:$REMOTE_DIR/artifacts/" artifacts/
-  say "fait. Les notebooks peuvent etre re-executes : chaque cached() trouvera son parquet."
+  say "done. The notebooks can be re-run: every cached() call will find its parquet."
 }
 
 cmd_push() {
   check_alive
-  say "envoi artifacts/ vers la tour"
+  say "sending artifacts/ to the tower"
   rsync "${RSYNC_OPTS[@]}" artifacts/ "$HOST:$REMOTE_DIR/artifacts/"
-  say "fait."
+  say "done."
 }
 
 
@@ -187,5 +187,5 @@ case "${1:-}" in
   stop)   shift; cmd_stop "$@" ;;
   pull)   shift; cmd_pull "$@" ;;
   push)   shift; cmd_push "$@" ;;
-  *)      sed -n '3,20p' "$0"; exit 1 ;;
+  *)      sed -n '3,18p' "$0"; exit 1 ;;
 esac

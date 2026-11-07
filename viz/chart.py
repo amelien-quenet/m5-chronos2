@@ -1,9 +1,10 @@
 """Data-space drawing on top of a Manim NumberPlane.
 
-`scene.py` imports this as `ch` and never touches scene coordinates directly. That is
-the whole point of the module: a Manim scene mixes two coordinate systems -- the data's
-(hours, shares of a week) and the screen's (units of frame height) -- and every bug that
-cost real time in this animation came from a number crossing between them unnoticed. A
+`scene_weekly.py` imports this as `ch` and never touches scene coordinates directly.
+That is the whole point of the module: a Manim scene mixes two coordinate systems -- the
+data's (weekdays, shares of a week) and the screen's (units of frame height) -- and every
+bug that cost real time in this animation came from a number crossing between them
+unnoticed. A
 bar's height is a *share*; its height on screen is a consequence of the plane it is
 drawn in. Here the conversion happens in one place.
 

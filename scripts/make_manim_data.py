@@ -1,28 +1,28 @@
 #!/usr/bin/env python
-"""Donnees du film sur la forme hebdomadaire.
+"""Data for the weekly-shape animation.
 
-Ce que le film illustre
------------------------
-La construction du plongement : une serie quotidienne devient un vecteur de 7 nombres
-(la part de la semaine portee par chaque jour), puis un point dans un plan 2D ou les
-familles de formes se separent.
+What the animation illustrates
+------------------------------
+The construction of the embedding: a daily series becomes a vector of 7 numbers (the
+share of a week carried by each day), then a point in a 2D plane where families of
+shapes separate.
 
-**Les familles sont les archetypes plantes du notebook 10, etape 1** -- le controle
-positif -- et non des formes inventees pour la video. C'est ce qui rend le film honnete :
-il montre a quoi *ressemblerait* une structure discrete, a une separation mesuree et
-au-dessus du plancher de detection, pendant que le billet dit ce que les vraies donnees
-se trouvent etre. Un profil de base tire de M5 porte les archetypes, les totaux
-hebdomadaires sont les vrais, et le bruit de comptage est redessine comme dans l'audit.
+**The families are the planted archetypes of notebook 10, step 1** -- the positive
+control -- and not shapes invented for the video. That is what makes the animation
+honest: it shows what a discrete structure *would* look like, at a measured separation
+above the detection floor, while the post states what the real data turns out to be. A
+base profile taken from M5 carries the archetypes, the weekly totals are the real ones,
+and the counting noise is redrawn as it is in the audit.
 
-Trois fichiers, le contrat que la scene lit
--------------------------------------------
-    weekly_series.parquet       series_id, date, value      la serie expliquee a l'ecran
+Three files, the contract the scene reads
+-----------------------------------------
+    weekly_series.parquet        series_id, date, value      the series explained on screen
     archetype_embeddings.parquet series_id, archetype, v0..v6
-    archetype_umap.parquet      series_id, archetype, umap_x, umap_y
+    archetype_umap.parquet       series_id, archetype, umap_x, umap_y
 
-Invariant verifie ici : le vecteur stocke de la serie expliquee est **exactement** celui
-que la scene obtient en empilant les semaines affichees. Sinon le film montrerait une
-chose et afficherait les chiffres d'une autre.
+Invariant checked here: the stored vector of the explained series is **exactly** the one
+the scene obtains by stacking the weeks it displays. Otherwise the animation would show
+one thing and print the numbers of another.
 
     uv run --extra viz python scripts/make_manim_data.py
 """
@@ -42,19 +42,19 @@ from m5_chronos2.shapes import (WEEKDAYS, positive_control, separation, shape_ma
 SAMPLE_SIZE = 500
 SEED = 42
 
-# Nombre de semaines que la scene fait defiler. Le vecteur affiche est l'agregat de
-# ces semaines-la, donc ce nombre appartient autant aux donnees qu'a l'animation.
+# How many weeks the scene counts through. The displayed vector is the aggregate of
+# those weeks, so this number belongs as much to the data as to the animation.
 N_WEEKS = 20
 
-N_ARCHETYPES = 3          # une couleur, une tournee par archetype dans le film
-SEPARATION = 0.8          # bien au-dessus du plancher de detection mesure au notebook 10
+N_ARCHETYPES = 3          # one colour, one pass per archetype in the animation
+SEPARATION = 0.8          # well above the detection floor measured in notebook 10
 MIN_WEEKS = 26
 
 ARCHETYPE_NAMES = ["weekend", "weekday", "midweek"]
 
 
 def base_profile_and_totals(roster: str, last_day):
-    """Profil moyen reel et totaux hebdomadaires reels : ce sur quoi la simulation repose."""
+    """The real mean profile and the real weekly totals: what the simulation rests on."""
     sales = pl.read_parquet(ARTIFACTS_DIR / f"sales_flags_{roster}.parquet")
     shapes_table = weekly_shapes(sales, last_day=last_day, min_weeks=MIN_WEEKS)
     ids, blocks, totals = weekly_share_array(sales, last_day=last_day)
@@ -69,27 +69,27 @@ def base_profile_and_totals(roster: str, last_day):
 
 def example_series(profile: np.ndarray, weekly_totals: np.ndarray,
                    generator: np.random.Generator):
-    """Tire N_WEEKS semaines de ventes quotidiennes, et le vecteur qu'elles donnent.
+    """Draw N_WEEKS weeks of daily sales, and the vector they give.
 
-    Le vecteur est recalcule a partir des semaines tirees, pas copie du profil latent :
-    c'est la double normalisation du rapport, appliquee aux chiffres que la scene va
-    reellement empiler.
+    The vector is recomputed from the drawn weeks rather than copied from the latent
+    profile: it is the same double normalisation the study uses everywhere, applied to
+    the numbers the scene will actually stack.
     """
     totals = np.maximum(np.rint(weekly_totals[:N_WEEKS]), 1).astype(np.int64)
-    if len(totals) < N_WEEKS:                      # serie courte : on boucle ses totaux
+    if len(totals) < N_WEEKS:                      # short series: loop its totals
         totals = np.resize(totals, N_WEEKS)
     counts = generator.multinomial(totals, profile)          # N_WEEKS x 7
 
-    shares = counts / counts.sum(axis=1, keepdims=True)      # L1 par semaine
-    vector = shares.mean(axis=0)                             # puis moyenne, qui somme a 1
+    shares = counts / counts.sum(axis=1, keepdims=True)      # L1 per week
+    vector = shares.mean(axis=0)                             # then the mean, which sums to 1
     return counts, vector / vector.sum()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out", default="../code/manim/data",
-                        help="dossier ou la scene lit ses parquets")
+    parser.add_argument("--out", default="viz/data",
+                        help="directory the scene reads its parquets from")
     parser.add_argument("--seed", type=int, default=SEED)
     arguments = parser.parse_args()
 
@@ -100,39 +100,39 @@ def main():
     roster = roster_name(SAMPLE_SIZE, SEED)
     last_day = make_windows().filter(pl.col("role") == "validation")["origin"][0]
     base, totals = base_profile_and_totals(roster, last_day)
-    print(f"profil de base reel : {np.round(base, 3)}")
-    print(f"{len(totals)} series, mediane {np.median([t.mean() for t in totals]):.1f} unites/semaine")
+    print(f"real base profile: {np.round(base, 3)}")
+    print(f"{len(totals)} series, median {np.median([t.mean() for t in totals]):.1f} units/week")
 
     simulation = positive_control(base, totals, n_clusters=N_ARCHETYPES,
                                   sep=SEPARATION, seed=arguments.seed)
     shapes = simulation.shapes.copy()
-    print(f"{N_ARCHETYPES} archetypes, separation mesuree delta = {simulation.separation:.2f}")
+    print(f"{N_ARCHETYPES} archetypes, measured separation delta = {simulation.separation:.2f}")
 
-    # La serie expliquee : ses semaines sont tirees, donc son vecteur doit etre refait a
-    # partir d'elles et remis dans la matrice AVANT la projection, sans quoi son point
-    # ne serait pas celui de la serie montree.
+    # The explained series: its weeks are drawn, so its vector has to be rebuilt from
+    # them and put back into the matrix BEFORE the projection, otherwise its point would
+    # not be the point of the series shown.
     example = int(np.flatnonzero(simulation.labels == 0)[0])
     counts, vector = example_series(simulation.profiles[example], totals[example], generator)
     shapes[example] = vector
 
     coordinates, method = umap_layout(shapes, seed=arguments.seed)
-    print(f"projection : {method}")
+    print(f"projection: {method}")
 
     ids = [f"S{index:04d}" for index in range(len(shapes))]
     names = [ARCHETYPE_NAMES[label] for label in simulation.labels]
     example_id = ids[example]
 
-    # --- l'invariant ---------------------------------------------------------------
+    # --- the invariant --------------------------------------------------------------
     redone = counts / counts.sum(axis=1, keepdims=True)
     redone = redone.mean(axis=0)
     redone = redone / redone.sum()
     error = float(np.abs(redone - shapes[example]).max())
-    assert error < 1e-12, f"le vecteur stocke ne vient pas des semaines ecrites ({error:.1e})"
+    assert error < 1e-12, f"the stored vector does not come from the weeks written ({error:.1e})"
     assert abs(shapes[example].sum() - 1) < 1e-12
-    print(f"invariant : vecteur stocke == agregat des {N_WEEKS} semaines ecrites "
-          f"(ecart {error:.1e})")
+    print(f"invariant: stored vector == aggregate of the {N_WEEKS} weeks written "
+          f"(difference {error:.1e})")
 
-    # --- ecriture ------------------------------------------------------------------
+    # --- writing --------------------------------------------------------------------
     start = last_day - timedelta(days=N_WEEKS * WEEKDAYS - 1)
     dates = pl.date_range(start, last_day, interval="1d", eager=True)
     assert len(dates) == N_WEEKS * WEEKDAYS
@@ -155,13 +155,13 @@ def main():
         "umap_y": coordinates[:, 1].astype(float),
     }).write_parquet(out / "archetype_umap.parquet")
 
-    print(f"\necrit dans {out} :")
-    print(f"  weekly_series.parquet         {series.height} jours de {example_id} "
+    print(f"\nwritten to {out}:")
+    print(f"  weekly_series.parquet         {series.height} days of {example_id} "
           f"({names[example]})")
     print(f"  archetype_embeddings.parquet  {embeddings.height} series x {WEEKDAYS}")
     print(f"  archetype_umap.parquet        {method}, "
           f"{', '.join(f'{n}={names.count(n)}' for n in ARCHETYPE_NAMES[:N_ARCHETYPES])}")
-    print(f"\nla scene lit SERIES_ID = {example_id}")
+    print(f"\nthe scene reads SERIES_ID = {example_id}")
 
 
 if __name__ == "__main__":

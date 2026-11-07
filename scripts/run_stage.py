@@ -1,20 +1,20 @@
 #!/usr/bin/env python
-"""Runner par etapes : le calcul lourd de l'etude, hors des notebooks.
+"""Stage runner: the study's heavy computation, outside the notebooks.
 
-Principe
---------
-Une *etape* est une fonction pure `configuration -> artifacts/<nom>.parquet`. Elle
-est autonome (tout est dans la ligne de commande, rien dans l'etat d'un kernel),
-elle ecrit son resultat sur disque, et elle est reprenable : relancee, elle saute
-ce qui existe deja. C'est le contrat que `chronos2.cached()` implemente deja -- ce
-script ne fait que l'exposer en ligne de commande pour qu'un calcul de six heures
-puisse etre lance puis oublie.
+Principle
+---------
+A *stage* is a pure function `configuration -> artifacts/<name>.parquet`. It is
+self-contained (everything is on the command line, nothing in a kernel's state),
+it writes its result to disk, and it is resumable: run again, it skips what
+already exists. That is the contract `chronos2.cached()` already implements --
+this script only exposes it on the command line, so that a six-hour computation
+can be launched and then forgotten.
 
-Les etapes appellent exactement les memes fonctions que les notebooks, vers
-exactement les memes chemins. Donc apres un run sur la tour et un rsync des
-artifacts, les notebooks se re-executent de bout en bout en quelques secondes :
-chaque `cached()` trouve son parquet. Les notebooks restent la couche narrative
--- scores, figures, redaction -- et ne calculent plus rien.
+The stages call exactly the same functions as the notebooks, to exactly the same
+paths. So after a run on the tower and an rsync of the artifacts, the notebooks
+re-execute end to end in seconds: every `cached()` finds its parquet. The
+notebooks stay the narrative layer -- scores, figures, prose -- and compute
+nothing.
 
 Usage
 -----
@@ -24,18 +24,18 @@ Usage
     python scripts/run_stage.py --stages context_coarse --force
     python scripts/run_stage.py --stages finetune_test --finetune-context 1829
 
-Routage
+Routing
 -------
-Une etape marquee `needs_gpu` refuse de tourner sur CPU : le facteur mesure est
-de ~24x, donc la lancer sur le portable n'est pas un choix mais un oubli.
-`--allow-slow` leve le refus quand c'est volontaire.
+A stage marked `needs_gpu` refuses to run on CPU: the measured factor is about
+24x, so launching it on the laptop is not a choice but an oversight.
+`--allow-slow` lifts the refusal when it is deliberate.
 
-Tracabilite
------------
-Chaque artifact produit recoit un `<nom>.parquet.meta.json` : machine, device,
-versions des bibliotheques, seed, roster, commit git, duree. Un CPU et un GPU ne
-donnent pas des nombres bit-a-bit identiques ; sans cette trace, un tableau de
-comparaison n'est pas defendable.
+Traceability
+------------
+Every artifact produced gets a `<name>.parquet.meta.json`: machine, device,
+library versions, seed, roster, git commit, duration. A CPU and a GPU do not
+return bit-identical numbers; without that record, a comparison table is not
+defensible.
 """
 
 import argparse
@@ -73,14 +73,14 @@ from m5_chronos2.data import ARTIFACTS_DIR, HORIZON, roster_name
 from m5_chronos2.evaluation import actuals, make_windows
 from m5_chronos2.metrics import join_truth, score
 
-# --- Configuration de l'etude, identique aux notebooks -----------------------------
+# --- The study's configuration, identical to the notebooks -------------------------
 
 SAMPLE_SIZE = 500
 SEED = 42
 
-CONTEXT_LENGTH = None          # maximum du modele, comme en 05 et 06
-CROSS_LEARNING_BATCH = 100     # series par groupe d'attention (reglage du fournisseur)
-SHUFFLE_SEED = 0               # ordre des series pour le cross-learning
+CONTEXT_LENGTH = None          # the model's maximum, as in 05 and 06
+CROSS_LEARNING_BATCH = 100     # series per attention group (the vendor's own setting)
+SHUFFLE_SEED = 0               # series order for cross-learning
 
 COARSE_GRID = [7, 14, 21, 28, 42, 56, 84, 112, 140, 168, 224, 280, 364,
                448, 560, 728, 896, 1092, 1288, 1456, 1680]
@@ -97,7 +97,7 @@ TRACKED_PACKAGES = ["chronos-forecasting", "torch", "transformers", "peft",
                     "polars", "numpy", "pyarrow"]
 
 
-# --- Tracabilite --------------------------------------------------------------------
+# --- Traceability -------------------------------------------------------------------
 
 def git_commit() -> str:
     try:
@@ -119,7 +119,7 @@ def package_versions() -> dict:
 
 
 def write_meta(path: Path, stage: str, device: str, seconds: float, extra: dict | None = None):
-    """Le sidecar qui dit d'ou vient ce fichier. Jamais un artifact sans son meta."""
+    """The sidecar that says where this file came from. Never an artifact without its meta."""
     meta = {
         "stage": stage,
         "artifact": path.name,
@@ -137,10 +137,10 @@ def write_meta(path: Path, stage: str, device: str, seconds: float, extra: dict 
     path.with_suffix(path.suffix + ".meta.json").write_text(json.dumps(meta, indent=2, default=str))
 
 
-# --- Les donnees, chargees une fois -------------------------------------------------
+# --- The data, loaded once ----------------------------------------------------------
 
 class Study:
-    """Tout ce que les etapes partagent. Charge paresseusement : `--list` ne lit rien."""
+    """Everything the stages share. Loaded lazily: `--list` reads nothing."""
 
     def __init__(self, device: str):
         self.device = device
@@ -199,19 +199,19 @@ class Study:
     def choice(self) -> dict:
         if not self.choice_path.exists():
             raise SystemExit(
-                f"\n{self.choice_path.name} absent.\n"
-                "Le choix des longueurs de contexte n'est pas une etape de calcul : c'est\n"
-                "une decision prise en regardant le sweep, dans le notebook 07, sur le Mac.\n"
-                "Lancer d'abord context_coarse et context_fine, rapatrier les artifacts,\n"
-                "executer le notebook 07, puis revenir."
+                f"\n{self.choice_path.name} is missing.\n"
+                "Choosing the context lengths is not a computation step: it is a decision\n"
+                "made by looking at the sweep, in notebook 07, on the Mac.\n"
+                "Run context_coarse and context_fine first, pull the artifacts, run\n"
+                "notebook 07, then come back."
             )
         return json.loads(self.choice_path.read_text())
 
     def coarse_grid(self) -> list[int]:
-        """Grille grossiere bornee par l'historique le plus long.
+        """Coarse grid, bounded by the longest history.
 
-        Toute longueur >= max_history lit l'historique entier, donc equivaut au
-        modele vanilla : on garde max_history comme borne superieure unique.
+        Any length >= max_history reads the whole history, so it is equivalent to the
+        vanilla model: max_history is kept as the single upper bound.
         """
         return sorted({length for length in COARSE_GRID if length < self.max_history}
                       | {self.max_history})
@@ -224,10 +224,10 @@ class Study:
         )
 
     def segment_winners(self, lengths: list[int]) -> list[int]:
-        """Meilleure longueur par segment (jours 1-7 / 8-28), au metrique de selection.
+        """Best length per segment (days 1-7 / 8-28), on the selection metric.
 
-        C'est le seul endroit ou le runner note des resultats : la grille fine depend
-        des gagnants de la grille grossiere.
+        This is the only place where the runner scores anything: the fine grid depends
+        on the coarse grid's winners.
         """
         segment = (pl.when(pl.col("horizon") <= EARLY_LAST_DAY)
                    .then(pl.lit("days 01-07")).otherwise(pl.lit("days 08-28")))
@@ -241,7 +241,7 @@ class Study:
                 for _, part in by_segment.group_by("segment", maintain_order=True)]
 
 
-# --- Les etapes ---------------------------------------------------------------------
+# --- The stages ---------------------------------------------------------------------
 
 @dataclass
 class Stage:
@@ -249,13 +249,13 @@ class Stage:
     description: str
     run: Callable[[Study], list[Path]]
     needs_gpu: bool = False
-    cost: str = "light"            # "light" < 10 min, "heavy" au-dela
+    cost: str = "light"            # "light" < 10 min, "heavy" beyond that
     requires: list[str] = field(default_factory=list)
     note: str = ""
 
 
 def stage_vanilla(study: Study) -> list[Path]:
-    """Chronos-2 sans rien : pas de covariable, pas de cross-learning, contexte maximum."""
+    """Chronos-2 with nothing: no covariates, no cross-learning, maximum context."""
     path = ARTIFACTS_DIR / "predictions" / f"chronos2_vanilla_{study.name}.parquet"
 
     def compute():
@@ -263,17 +263,17 @@ def stage_vanilla(study: Study) -> list[Path]:
         for origin in study.windows["origin"].to_list():
             start = time.time()
             parts.append(forecast(history(study.sales, origin), origin, device=study.device))
-            print(f"  origine {origin} : {len(study.series_ids)} series en {time.time() - start:.0f} s")
+            print(f"  origin {origin}: {len(study.series_ids)} series in {time.time() - start:.0f} s")
         return pl.concat(parts)
 
     predictions = cached(path, compute)
     expected = len(study.series_ids) * HORIZON * study.windows.height
-    assert predictions.height == expected, f"{predictions.height} lignes, {expected} attendues"
+    assert predictions.height == expected, f"{predictions.height} rows, {expected} expected"
     return [path]
 
 
 def stage_uplift(study: Study) -> list[Path]:
-    """Table d'event uplift de l'origine de validation (reprise du jeu XGBoost)."""
+    """Event-uplift table at the validation origin (taken from the XGBoost feature set)."""
     from m5_chronos2.gbdt_features import (calendar_by_day, event_uplift,
                                            group_daily_means, load_all_series_long)
 
@@ -296,12 +296,12 @@ def _known_inputs(study: Study):
     future_known = future_window(covariates, study.validation_origin, study.series_ids)
     assert future_known.height == len(study.series_ids) * HORIZON
     missing = future_known.select(ALL_KNOWN_COVARIATES).null_count().sum_horizontal()[0]
-    assert missing == 0, "une covariable connue manque dans la fenetre"
+    assert missing == 0, "a known covariate is missing inside the window"
     return context_known, future_known
 
 
 def stage_covariates(study: Study) -> list[Path]:
-    """Les quatre blocs de covariables connues : calendrier, prix, SNAP+evenements, tout."""
+    """The four blocks of known covariates: calendar, price, SNAP+events, all of them."""
     context_known, future_known = _known_inputs(study)
     blocks = {**KNOWN_COVARIATE_BLOCKS, "all_known": ALL_KNOWN_COVARIATES}
     paths = []
@@ -316,7 +316,7 @@ def stage_covariates(study: Study) -> list[Path]:
 
 
 def stage_cross_learning(study: Study) -> list[Path]:
-    """Cross-learning actif, series melangees pour que les groupes ne soient pas homogenes."""
+    """Cross-learning on, series shuffled so the groups are not department-homogeneous."""
     shuffled = pl.Series(study.series_ids).shuffle(seed=SHUFFLE_SEED).to_list()
     order = pl.DataFrame({"id": shuffled}).with_row_index("position")
     context_shuffled = (study.validation_context.join(order, on="id")
@@ -329,7 +329,7 @@ def stage_cross_learning(study: Study) -> list[Path]:
 
 
 def stage_blank(study: Study) -> list[Path]:
-    """Trois facons de signaler les periodes blanches : covariable passee, second canal, masque."""
+    """Three ways to flag blank periods: past covariate, second channel, NaN mask."""
     context_blank = past_blank_flags(study.validation_context).with_columns(
         pl.col("is_blank").cast(pl.Float64))
     context_masked = context_blank.with_columns(
@@ -355,9 +355,9 @@ def stage_blank(study: Study) -> list[Path]:
 
 
 def stage_context_coarse(study: Study) -> list[Path]:
-    """Grille grossiere de longueurs de contexte, espacees sur une echelle log."""
+    """Coarse grid of context lengths, log-spaced."""
     grid = study.coarse_grid()
-    print(f"  grille grossiere ({len(grid)} longueurs) : {grid}")
+    print(f"  coarse grid ({len(grid)} lengths): {grid}")
     paths = []
     for length in grid:
         study.context_run(length)
@@ -366,17 +366,17 @@ def stage_context_coarse(study: Study) -> list[Path]:
 
 
 def stage_context_fine(study: Study) -> list[Path]:
-    """Grille fine, par pas d'une semaine a +/- 8 semaines des gagnants de la grille grossiere."""
+    """Fine grid, one-week steps within +/- 8 weeks of the coarse grid's winners."""
     grid = study.coarse_grid()
     winners = study.segment_winners(grid)
-    print(f"  gagnants grossiers : {winners}")
+    print(f"  coarse winners: {winners}")
     fine = sorted({
         length
         for winner in winners
         for length in range(max(FINE_STEP, winner - FINE_HALF_WIDTH),
                             min(study.max_history, winner + FINE_HALF_WIDTH) + 1, FINE_STEP)
     } - set(grid))
-    print(f"  grille fine ({len(fine)} nouvelles longueurs) : {fine}")
+    print(f"  fine grid ({len(fine)} new lengths): {fine}")
     paths = []
     for length in fine:
         study.context_run(length)
@@ -387,7 +387,7 @@ def stage_context_fine(study: Study) -> list[Path]:
 def _finetune_at(study: Study, origin: date, context_length: int, inputs: tuple) -> Path:
     output_dir = checkpoint_dir(study.name, origin, context_length,
                                NUM_STEPS, LEARNING_RATE, BATCH_SIZE)
-    print(f"  origine {origin}, fine-tune au contexte {context_length}")
+    print(f"  origin {origin}, fine-tune at context {context_length}")
     finetune(*inputs, context_length=context_length, output_dir=output_dir,
              num_steps=NUM_STEPS, learning_rate=LEARNING_RATE,
              batch_size=BATCH_SIZE, device=study.device)
@@ -395,16 +395,16 @@ def _finetune_at(study: Study, origin: date, context_length: int, inputs: tuple)
 
 
 def stage_finetune(study: Study) -> list[Path]:
-    """LoRA aux deux longueurs retenues par le notebook 07, origine de validation."""
+    """LoRA at the two lengths notebook 07 selected, validation origin."""
     choice = study.choice
     contexts = sorted({choice["late_context"], choice["early_context"]},
-                      key=lambda length: length != choice["late_context"])   # la longue d'abord
+                      key=lambda length: length != choice["late_context"])   # the long one first
     inputs = finetune_inputs(study.sales, study.validation_origin, study.series_ids)
     return [_finetune_at(study, study.validation_origin, length, inputs) for length in contexts]
 
 
 def stage_finetune_predict(study: Study) -> list[Path]:
-    """Previsions des checkpoints LoRA, tous appariements fine-tune x contexte de prediction."""
+    """Forecasts from the LoRA checkpoints, every fine-tune x predict-context pairing."""
     choice = study.choice
     finetune_contexts = sorted({choice["late_context"], choice["early_context"]})
     predict_contexts = sorted({choice["early_context"], choice["late_context"]})
@@ -414,12 +414,12 @@ def stage_finetune_predict(study: Study) -> list[Path]:
         checkpoint = checkpoint_dir(study.name, origin, finetune_context, NUM_STEPS,
                                     LEARNING_RATE, BATCH_SIZE) / "finetuned-ckpt"
         if not checkpoint.exists():
-            raise SystemExit(f"checkpoint absent : {checkpoint}\nlancer d'abord l'etape finetune")
+            raise SystemExit(f"checkpoint missing: {checkpoint}\nrun the finetune stage first")
         for length in predict_contexts:
             name = (f"lora_ctx{finetune_context}_steps{NUM_STEPS}_lr{LEARNING_RATE:g}"
                     f"_bs{BATCH_SIZE}_context_{length}_origin{origin}")
             path = experiment_path(name, study.name)
-            print(f"  LoRA@{finetune_context} -> prediction au contexte {length}")
+            print(f"  LoRA@{finetune_context} -> forecast at context {length}")
             cached(path, lambda length=length, checkpoint=checkpoint: forecast(
                 history(study.sales, origin), origin, context_length=int(length),
                 model_path=checkpoint, device=study.device))
@@ -428,37 +428,35 @@ def stage_finetune_predict(study: Study) -> list[Path]:
 
 
 def stage_origin_sweep(study: Study) -> list[Path]:
-    """Chronos-2 vanilla a 24 origines espacees de 7 jours, en reculant depuis la validation.
+    """Zero-shot Chronos-2 at 24 origins 7 days apart, counting back from validation.
 
-    Matiere premiere de la section 1 du dernier chapitre : la difficulte de prevision
-    est-elle une propriete de la serie, ou de la semaine ? Il faut pour y repondre une
-    erreur par couple (serie, origine), donc autant de previsions qu'il y a d'origines.
+    The raw material notebook 09 needs: is forecast difficulty a property of the series
+    or of the week? Answering that takes one error per (series, origin) pair, so as many
+    forecasts as there are origins.
 
-    Trois choix, tous dictes par l'honnetete de la mesure :
+    Three choices, all of them dictated by keeping the measurement honest:
 
-    - **modele zero-shot, pas le meilleur modele.** Le modele final est un raccord
-      impliquant un checkpoint LoRA entraine sur l'historique de l'origine de test.
-      Le promener vers le passe lui ferait voir le futur de chaque fenetre anterieure,
-      et re-fine-tuner 24 fois n'est pas finançable. On prend donc le modele brut a la
-      longueur de contexte retenue pour les jours 1-7, sur les 7 jours que ce segment
-      possede.
-    - **origine de validation comme point de depart**, pas celle de test : c'est un
-      diagnostic, il n'a aucune raison de lire la fenetre du benchmark final.
-    - **pas de recouvrement** : les origines sont espacees de 7 jours et seuls les 7
-      premiers jours sont notes, donc aucun jour n'est note deux fois et
-      l'autocovariance a l'ordre 1 entre origines n'est pas un artefact de
-      recouvrement.
+    - **the zero-shot model, not the best model.** The final model is a stitch involving
+      a LoRA checkpoint trained on the history up to the test origin. Walking it
+      backwards would let it see the future of every earlier window, and re-fine-tuning
+      24 times is not affordable. So this takes the untuned model at the context length
+      selected for days 1-7, over the 7 days that segment owns.
+    - **the validation origin as the starting point**, not the test one: this is a
+      diagnostic, and it has no business reading the final benchmark's window.
+    - **no overlap**: the origins are 7 days apart and only the first 7 days are scored,
+      so no day is scored twice and the lag-1 autocovariance between origins is not an
+      artefact of overlap.
 
-    La prevision reste a l'horizon standard de 28 jours -- identique a tout le reste de
-    l'etude, et le cout est le meme -- seuls les 7 premiers jours sont notes, par
+    The forecast still runs to the standard 28-day horizon -- identical to the rest of
+    the study, and the cost is the same -- and only the first 7 days are scored, by
     `persistence.cell_wql`.
     """
     from m5_chronos2.persistence import N_ORIGINS, SEGMENT_DAYS, origin_grid, sweep_context
 
     context = int(study.choice["early_context"])
     origins = origin_grid(study.validation_origin, N_ORIGINS, SEGMENT_DAYS)
-    print(f"  {len(origins)} origines, pas de {SEGMENT_DAYS} jours, contexte {context}")
-    print(f"  de {origins[0]} a {origins[-1]}")
+    print(f"  {len(origins)} origins, {SEGMENT_DAYS}-day steps, context {context}")
+    print(f"  from {origins[0]} to {origins[-1]}")
 
     paths = []
     for origin in origins:
@@ -472,37 +470,37 @@ def stage_origin_sweep(study: Study) -> list[Path]:
 
 def make_stage_finetune_test(contexts: list[int] | None):
     def stage_finetune_test(study: Study) -> list[Path]:
-        """Tout ce dont la section 4 du notebook 08 a besoin a l'origine de TEST.
+        """Everything section 4 of notebook 08 needs at the TEST origin.
 
-        Produit, pour chaque longueur passee en --finetune-context :
-          - le checkpoint LoRA re-entraine a l'origine de test ;
-          - ses previsions aux longueurs de prediction retenues ;
-        et, dans tous les cas, les previsions vanilla a l'origine de test aux memes
-        longueurs -- le notebook en a besoin si le gagnant d'un segment est vanilla.
+        For each length passed to --finetune-context it produces:
+          - the LoRA checkpoint re-trained at the test origin;
+          - its forecasts at the selected predict lengths;
+        and, in every case, the zero-shot forecasts at the test origin at those same
+        lengths -- the notebook needs them if a segment's winner is the zero-shot model.
 
-        Les longueurs doivent etre passees explicitement. C'est volontaire : les
-        deduire ici reviendrait a selectionner sur la fenetre de test, ce que le
-        protocole du notebook 03 interdit. Passer les deux longueurs est legitime
-        -- calculer n'est pas choisir, et le notebook 08 ne note que le gagnant
-        designe sur la validation -- mais le geste reste explicite et trace.
+        The lengths must be passed explicitly. That is deliberate: deriving them here
+        would amount to selecting on the test window, which notebook 03's protocol
+        forbids. Passing both lengths is legitimate -- computing is not choosing, and
+        notebook 08 only scores the winner designated on validation -- but the gesture
+        stays explicit and on the record.
         """
         if not contexts:
             raise SystemExit(
-                "\nfinetune_test exige --finetune-context.\n"
-                "  --finetune-context 1829        la seule longueur retenue sur validation\n"
-                "  --finetune-context 1099,1829   les deux, pour que le notebook 08 tourne\n"
-                "                                 d'un bout a l'autre sans rien calculer en local\n"
-                "La deduire ici reviendrait a choisir sur la fenetre de test."
+                "\nfinetune_test requires --finetune-context.\n"
+                "  --finetune-context 1829        the single length selected on validation\n"
+                "  --finetune-context 1099,1829   both, so notebook 08 runs end to end\n"
+                "                                 without computing anything locally\n"
+                "Deriving it here would amount to choosing on the test window."
             )
         origin = study.test_origin
         choice = study.choice
         predict_contexts = sorted({choice["early_context"], choice["late_context"]})
         paths = []
 
-        # Vanilla a l'origine de test. Nom identique a celui du notebook 08.
+        # Zero-shot at the test origin. Same artifact name notebook 08 uses.
         for length in predict_contexts:
             path = experiment_path(f"context_{length}_origin{origin}", study.name)
-            print(f"  vanilla test, contexte {length}")
+            print(f"  zero-shot test, context {length}")
             cached(path, lambda length=length: forecast(
                 history(study.sales, origin), origin,
                 context_length=int(length), device=study.device))
@@ -516,7 +514,7 @@ def make_stage_finetune_test(contexts: list[int] | None):
                 name = (f"lora_ctx{finetune_context}_steps{NUM_STEPS}_lr{LEARNING_RATE:g}"
                         f"_bs{BATCH_SIZE}_context_{length}_origin{origin}")
                 path = experiment_path(name, study.name)
-                print(f"  LoRA@{finetune_context} -> prediction test au contexte {length}")
+                print(f"  LoRA@{finetune_context} -> test forecast at context {length}")
                 cached(path, lambda length=length, checkpoint=checkpoint: forecast(
                     history(study.sales, origin), origin, context_length=int(length),
                     model_path=checkpoint, device=study.device))
@@ -527,35 +525,35 @@ def make_stage_finetune_test(contexts: list[int] | None):
 
 def build_registry(finetune_contexts: list[int] | None) -> dict[str, Stage]:
     return {s.name: s for s in [
-        Stage("vanilla", "Chronos-2 vanilla, deux origines", stage_vanilla,
+        Stage("vanilla", "zero-shot Chronos-2, both origins", stage_vanilla,
               cost="heavy", note="~2 min GPU / ~45 min CPU"),
-        Stage("uplift", "table d'event uplift (lecture des 30 490 series)", stage_uplift,
-              cost="light", note="CPU, pas de modele"),
-        Stage("covariates", "4 blocs de covariables connues", stage_covariates,
+        Stage("uplift", "event-uplift table (reads all 30,490 series)", stage_uplift,
+              cost="light", note="CPU, no model"),
+        Stage("covariates", "4 blocks of known covariates", stage_covariates,
               needs_gpu=True, cost="heavy", requires=["uplift"], note="~4 x 1 min GPU"),
-        Stage("cross_learning", "cross-learning actif, series melangees", stage_cross_learning,
+        Stage("cross_learning", "cross-learning on, series shuffled", stage_cross_learning,
               needs_gpu=True, cost="heavy"),
-        Stage("blank", "3 variantes de periodes blanches", stage_blank,
+        Stage("blank", "3 blank-period encodings", stage_blank,
               needs_gpu=True, cost="heavy"),
-        Stage("context_coarse", "grille grossiere de contextes", stage_context_coarse,
-              needs_gpu=True, cost="heavy", note="~21 longueurs, ~8 min GPU"),
-        Stage("context_fine", "grille fine autour des gagnants", stage_context_fine,
+        Stage("context_coarse", "coarse grid of context lengths", stage_context_coarse,
+              needs_gpu=True, cost="heavy", note="~21 lengths, ~8 min GPU"),
+        Stage("context_fine", "fine grid around the winners", stage_context_fine,
               needs_gpu=True, cost="heavy", requires=["context_coarse"],
-              note="~30 longueurs, ~12 min GPU"),
-        Stage("finetune", "LoRA aux 2 contextes, origine validation", stage_finetune,
+              note="~30 lengths, ~12 min GPU"),
+        Stage("finetune", "LoRA at both contexts, validation origin", stage_finetune,
               needs_gpu=True, cost="heavy",
-              note="~32 min / contexte GPU ; exige context_choice.json"),
-        Stage("finetune_predict", "previsions des checkpoints LoRA", stage_finetune_predict,
+              note="~32 min / context GPU; requires context_choice.json"),
+        Stage("finetune_predict", "forecasts from the LoRA checkpoints", stage_finetune_predict,
               needs_gpu=True, cost="heavy", requires=["finetune"]),
-        Stage("finetune_test", "origine de test : vanilla + re-fine-tune", make_stage_finetune_test(finetune_contexts),
-              needs_gpu=True, cost="heavy", note="exige --finetune-context"),
-        Stage("origin_sweep", "24 origines vanilla, pas de 7 jours", stage_origin_sweep,
+        Stage("finetune_test", "test origin: zero-shot + re-fine-tune", make_stage_finetune_test(finetune_contexts),
+              needs_gpu=True, cost="heavy", note="requires --finetune-context"),
+        Stage("origin_sweep", "24 zero-shot origins, 7-day steps", stage_origin_sweep,
               needs_gpu=True, cost="heavy",
-              note="~24 x 4 s GPU ; exige context_choice.json ; pour le notebook 09"),
+              note="~24 x 4 s GPU; requires context_choice.json; for notebook 09"),
     ]}
 
 
-# Ordre d'execution de --all : il s'arrete avant finetune, qui attend ta decision.
+# Execution order for --all: it stops before finetune, which waits on a human decision.
 DEFAULT_ORDER = ["vanilla", "uplift", "covariates", "cross_learning", "blank",
                  "context_coarse", "context_fine"]
 
@@ -563,18 +561,18 @@ DEFAULT_ORDER = ["vanilla", "uplift", "covariates", "cross_learning", "blank",
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--stages", help="noms separes par des virgules")
+    parser.add_argument("--stages", help="comma-separated stage names")
     parser.add_argument("--all", action="store_true",
-                        help=f"tout jusqu'au point de decision : {', '.join(DEFAULT_ORDER)}")
+                        help=f"everything up to the decision point: {', '.join(DEFAULT_ORDER)}")
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--force", action="store_true",
-                        help="recalcule meme si les artifacts existent")
+                        help="recompute even if the artifacts exist")
     parser.add_argument("--device", default=None)
     parser.add_argument("--allow-slow", action="store_true",
-                        help="autorise une etape needs_gpu sur CPU")
+                        help="allow a needs_gpu stage to run on CPU")
     parser.add_argument("--finetune-context", default=None,
-                        help="longueur(s) retenue(s) sur validation, pour finetune_test ; "
-                             "une ou plusieurs, separees par des virgules")
+                        help="length(s) selected on validation, for finetune_test; "
+                             "one or more, comma-separated")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -583,12 +581,12 @@ def main():
     registry = build_registry(finetune_contexts)
 
     if args.list:
-        print(f"{'etape':20s} {'gpu':4s} {'cout':7s} {'depend de':18s} note")
+        print(f"{'stage':20s} {'gpu':4s} {'cost':7s} {'depends on':18s} note")
         for stage in registry.values():
-            print(f"{stage.name:20s} {'oui' if stage.needs_gpu else '-':4s} "
+            print(f"{stage.name:20s} {'yes' if stage.needs_gpu else '-':4s} "
                   f"{stage.cost:7s} {','.join(stage.requires) or '-':18s} {stage.note}")
         print(f"\n--all = {' -> '.join(DEFAULT_ORDER)}")
-        print("puis : notebook 07 sur le Mac -> context_choice.json -> finetune")
+        print("then: notebook 07 on the Mac -> context_choice.json -> finetune")
         return
 
     if args.all:
@@ -596,11 +594,11 @@ def main():
     elif args.stages:
         names = [n.strip() for n in args.stages.split(",") if n.strip()]
     else:
-        parser.error("donner --stages, --all ou --list")
+        parser.error("pass --stages, --all or --list")
 
     unknown = [n for n in names if n not in registry]
     if unknown:
-        parser.error(f"etape(s) inconnue(s) : {unknown}. Voir --list")
+        parser.error(f"unknown stage(s): {unknown}. See --list")
 
     device = resolve_device(args.device)
     report = device_report(device)
@@ -610,9 +608,9 @@ def main():
     blocked = [n for n in names if registry[n].needs_gpu and not device.startswith("cuda")]
     if blocked and not args.allow_slow:
         raise SystemExit(
-            f"\netape(s) marquee(s) needs_gpu lancee(s) sur {device} : {blocked}\n"
-            "Le facteur mesure est d'environ 24x : ce n'est probablement pas un choix.\n"
-            "Lancer sur la tour, ou ajouter --allow-slow si c'est volontaire."
+            f"\nstage(s) marked needs_gpu launched on {device}: {blocked}\n"
+            "The measured factor is about 24x, so this is probably not a choice.\n"
+            "Run it on the tower, or add --allow-slow if it is deliberate."
         )
 
     study = Study(device)
@@ -620,38 +618,38 @@ def main():
 
     if args.dry_run:
         for name in names:
-            print(f"  [dry-run] {name} : {registry[name].description}")
+            print(f"  [dry-run] {name}: {registry[name].description}")
         return
 
-    # Le dtype est verifie une fois, avant d'engager des heures de calcul.
+    # The dtype is checked once, before committing hours of computation.
     dtype = pipeline_dtype(get_pipeline(device=device))
-    print(f"dtype du modele : {dtype}")
+    print(f"model dtype: {dtype}")
     if "float32" not in dtype:
         raise SystemExit(
-            f"dtype {dtype} et non float32. Sur Pascal (sm_61) la demi-precision est\n"
-            "un ralentissement d'un facteur ~64, pas une acceleration. On s'arrete."
+            f"dtype is {dtype}, not float32. On Pascal (sm_61) half precision is a\n"
+            "~64x slowdown, not a speed-up. Stopping here."
         )
 
     total = time.time()
     for name in names:
         stage = registry[name]
-        print(f"\n{'-' * 70}\n{name} : {stage.description}")
+        print(f"\n{'-' * 70}\n{name}: {stage.description}")
         start = time.time()
         try:
             produced = stage.run(study)
         except KeyboardInterrupt:
-            print(f"\ninterrompu pendant {name} ; les artifacts deja ecrits sont conserves")
+            print(f"\ninterrupted during {name}; the artifacts already written are kept")
             sys.exit(130)
         seconds = time.time() - start
         for path in produced:
             if path.exists() and path.is_file():
                 write_meta(path, name, device, seconds, {"dtype": dtype})
-        print(f"{name} termine en {seconds / 60:.1f} min, {len(produced)} artifact(s)")
+        print(f"{name} finished in {seconds / 60:.1f} min, {len(produced)} artifact(s)")
 
-    print(f"\n{'=' * 70}\ntotal : {(time.time() - total) / 60:.1f} min")
+    print(f"\n{'=' * 70}\ntotal: {(time.time() - total) / 60:.1f} min")
     if set(names) & set(DEFAULT_ORDER) and not study.choice_path.exists():
-        print("\nProchaine etape : rapatrier les artifacts, executer le notebook 07 sur le\n"
-              "Mac, choisir les longueurs de contexte, puis lancer l'etape finetune.")
+        print("\nNext: pull the artifacts, run notebook 07 on the Mac, choose the context\n"
+              "lengths, then launch the finetune stage.")
 
 
 if __name__ == "__main__":

@@ -1,23 +1,20 @@
 """The weekly-shape embedding, animated.
 
-The daily counterpart of `scene.py`, which did the same thing on hourly data. The
-construction is the report's, with one substitution throughout: a **week of 7 weekdays**
-replaces a **day of 24 hours**. Normalise each week to 1, pile the weeks up weekday by
-weekday, normalise again, and what is left is 7 numbers that say what share of a week
-each day carries -- a point in a space where shapes can be compared without volume
-getting in the way.
+The construction animated here is the one `shapes.py` computes: normalise each week to
+1, pile the weeks up weekday by weekday, normalise again, and what is left is 7 numbers
+that say what share of a week each day carries -- a point in a space where shapes can be
+compared without volume getting in the way.
 
-What changed besides the arithmetic
------------------------------------
-- **The vector is shown in full.** 24 entries had to be elided to fit the frame; 7 do
-  not, so every coordinate is on screen and tied live to the bar it came from. The
-  ellipsis was a concession, and it is gone.
-- **Every weekday gets a tick.** With 24 hours only three could be labelled.
+Choices the 7-dimensional vector allows
+---------------------------------------
+- **The vector is shown in full.** All 7 coordinates fit on screen, each tied live to
+  the bar it came from, so nothing has to be elided.
+- **Every weekday gets a tick.**
 - **The countdown runs over weeks**, and the easing, the fan-out and the camera zoom are
-  derived from the number of steps rather than hard-coded for 21, so changing N_WEEKS in
-  the generator does not quietly break the framing.
+  derived from the number of steps rather than hard-coded, so changing N_WEEKS in the
+  generator does not quietly break the framing.
 
-Coordinates versus camera (modified for m5)
+Coordinates versus camera
 -------------------------------------------
 Two ways to make something look bigger -- move the mobjects or move the camera -- and
 mixing them is how a scene becomes unmaintainable. The discipline here, verified across
@@ -143,15 +140,14 @@ class WeeklyEmbedding(MovingCameraScene):
         """How long step `i` of `n` lasts: the easing mapped into [MIN_STEP, MAX_STEP].
 
         The floor is not cosmetic. A symmetric easing is exactly 0 at the midpoint, and
-        manim refuses a run_time of 0 outright. The original dodged that by accident --
-        its `(10.5 - i)/11` is off-centre for `range(20)`, whose midpoint is 9.5, so the
-        middle step landed on 4e-05 s rather than 0. Renderable, but far below one
-        frame, which is why a third of that countdown went past in a single frame each.
+        manim refuses a run_time of 0 outright. An off-centre easing only dodges that
+        by accident, landing the middle step on a few tens of microseconds -- renderable,
+        but far below one frame, so those steps go past in a single frame each.
 
         Mapping into a range fixes both faults at once: nothing is zero, and nothing is
-        shorter than a frame. EASE_POWER is gentler than the original's 4.5 for the same
-        reason -- at 4.5 over nineteen steps, most of them collapse onto the floor and
-        the easing stops being an easing.
+        shorter than a frame. A gentle EASE_POWER matters for the same reason: raise it
+        and most steps collapse onto the floor, at which point the easing stops being an
+        easing.
         """
         return MIN_STEP + (MAX_STEP - MIN_STEP) * cls._ease(i, n)
 
