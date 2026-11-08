@@ -28,13 +28,17 @@ def quantile_column(level: float) -> str:
     return f"q{level:.1f}"
 
 
-def quantile_loss(level: float) -> pl.Expr:
-    """Quantile (pinball) loss of one quantile forecast, row by row.
+def quantile_loss(level: float, column: str | None = None) -> pl.Expr:
+    """Quantile (pinball) loss, row by row, of the forecast held in `column`.
 
     Under-prediction (y above the forecast) costs `level` per unit,
     over-prediction costs `1 - level` per unit.
+
+    `column` defaults to that level's own quantile forecast, which is what WQL scores:
+    the loss is then a proper scoring rule, minimised by the true quantile. Pass
+    "y_pred" to price the same asymmetry on the point forecast instead.
     """
-    error = pl.col("y") - pl.col(quantile_column(level))
+    error = pl.col("y") - pl.col(column or quantile_column(level))
     return pl.when(error >= 0).then(level * error).otherwise((level - 1) * error)
 
 
@@ -52,8 +56,18 @@ def metric_expressions() -> list[pl.Expr]:
         (100 * absolute_error.sum() / total_actual).alias("WMAPE"),
         absolute_error.quantile(0.9).alias("P90"),
         (pl.sum_horizontal(wql_per_level) / len(QUANTILE_LEVELS)).alias("WQL"),
-        # RQL: only the 0.2 quantile, so over-prediction costs 4x more than under-prediction.
-        (100 * quantile_loss(0.2).sum() / total_actual).alias("RQL"),
+        # RQL: the 0.2 asymmetry applied to the POINT forecast, so over-prediction costs
+        # 4x under-prediction on the number one would actually act on.
+        #
+        # Scored on y_pred, not on q0.2. Scoring it on q0.2 made the metric mean two
+        # different things: for a point-only model (every quantile column a copy of
+        # y_pred) it was the asymmetric cost of the forecast, but for a model emitting
+        # real quantiles it was a proper scoring rule for the 20th percentile -- a
+        # deliberately low number that can hardly over-predict. On this data that gap is
+        # a factor of ~2.75 at identical skill, so the column was not comparable down
+        # its own rows. Corrected 2026-11-07; RQL figures produced before that date are
+        # not comparable with these.
+        (100 * quantile_loss(0.2, "y_pred").sum() / total_actual).alias("RQL"),
     ]
 
 
