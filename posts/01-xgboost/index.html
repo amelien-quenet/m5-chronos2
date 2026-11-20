@@ -7,9 +7,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="dcterms.date" content="2026-11-01">
-<meta name="description" content="Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness every later claim rests on. Fifty-two engineered features beat a 28-day mean by less than one point.">
+<meta name="description" content="Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness. Surprisingly, fifty-two engineered features beat a 28-day mean by less than one point.">
 
-<title>A baseline that earns its place – Investigating Chronos-2</title>
+<title>The baseline: XGBoost – Investigating Chronos-2</title>
 <style>
 /* Default styles provided by pandoc.
 ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
@@ -183,10 +183,10 @@ window.Quarto = {
 <header id="title-block-header" class="quarto-title-block default page-columns page-full">
   <div class="quarto-title-banner page-columns page-full">
     <div class="quarto-title column-body">
-      <div class="quarto-title-block"><div><h1 class="title">A baseline that earns its place</h1><button type="button" class="btn code-tools-button dropdown-toggle" id="quarto-code-tools-menu" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi"></i> Code</button><ul class="dropdown-menu dropdown-menu-end" aria-labelelledby="quarto-code-tools-menu"><li><a id="quarto-show-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Show All Code</a></li><li><a id="quarto-hide-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Hide All Code</a></li><li><hr class="dropdown-divider"></li><li><a id="quarto-view-source" class="dropdown-item" href="javascript:void(0)" role="button">View Source</a></li></ul></div></div>
+      <div class="quarto-title-block"><div><h1 class="title">The baseline: XGBoost</h1><button type="button" class="btn code-tools-button dropdown-toggle" id="quarto-code-tools-menu" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi"></i> Code</button><ul class="dropdown-menu dropdown-menu-end" aria-labelelledby="quarto-code-tools-menu"><li><a id="quarto-show-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Show All Code</a></li><li><a id="quarto-hide-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Hide All Code</a></li><li><hr class="dropdown-divider"></li><li><a id="quarto-view-source" class="dropdown-item" href="javascript:void(0)" role="button">View Source</a></li></ul></div></div>
                   <div>
         <div class="description">
-          Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness every later claim rests on. Fifty-two engineered features beat a 28-day mean by less than one point.
+          Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness. Surprisingly, fifty-two engineered features beat a 28-day mean by less than one point.
         </div>
       </div>
                           <div class="quarto-categories">
@@ -239,11 +239,12 @@ window.Quarto = {
 
 
 
-<p>A foundation model is only impressive against something. So I began by building the reference it would have to beat: a feature-engineered gradient-boosting model, in the tradition that won M5, inspired by a public top-4% solution.</p>
-<p>The result worth stating up front is how little those 52 engineered features buy over the mean of the last 28 days. That is not a criticism of the solution I reproduced — I reduced it to a single XGBoost model where the original used LightGBM — but it is what makes the comparison in <a href="../02-chronos2/">the next post</a> far more interesting.</p>
+<p>Testing our foundation model only makes sense when put against something. So I began by building the reference it would have to beat: a feature-engineered gradient-boosting model, in the tradition that won M5, inspired by a public top-4% solution.</p>
+<p>The result worth stating up front is how little the feature engineering buys over the “mean of the last 28 days” elementary model. That is not a criticism of the solution reproduced — I reduced it to a single XGBoost model where the original used LightGBM — but it makes the comparison in <a href="../02-chronos2/">the next post</a> all the more interesting.</p>
 <section id="the-dataset" class="level2">
 <h2 class="anchored" data-anchor-id="the-dataset">The dataset</h2>
-<p>One target value per series per day: units of one item sold in one Walmart store. History runs 2011-01-29 to 2016-05-22, 1,941 days, 30,490 series. I work throughout on a frozen random sample of 500 series, drawn once and saved, so every number in these three posts comes from the same items. The sample is for tractability, nothing more.</p>
+<p>One target value per series per day: units of one item sold in one Walmart store. History runs 2011-01-29 to 2016-05-22, 1,941 days, 30,490 series. <strong>The task is to predict 28 days ahead.</strong></p>
+<p>I work throughout on a frozen random sample of 500 series, drawn once and saved, so every number in these three posts comes from the same items. The sample is for practical computing power reasons, as the whole study was made on a 10 year old laptop.</p>
 <div id="cell-fig-intermittency" class="cell" data-execution_count="2">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -283,13 +284,13 @@ Figure&nbsp;1: Left: share of on-sale days with no sale, one count per series. R
 </div>
 </div>
 </div>
-<p>The median series sells 0.55 units a day and is silent on 66% of the days it is on the shelf. Two consequences run through everything that follows.</p>
-<p>First, <strong>a zero is usually information, not a gap.</strong> The one exception is structural: days before an item’s first price in <code>sell_prices.csv</code>, when it was not on the shelf at all. Those are dropped from every history. Everything else is a real zero — the item was available and nobody bought it — and it is part of what the forecast has to get right.</p>
-<p>Second, <strong>the evaluation metric over a period of zero sales cannot be a percentage error.</strong> Dividing by an actual of zero is undefined, and most actuals are zero.</p>
+<p>The median sells of the averaged series is <strong>0.55 units a day</strong>, and the median share of days a series is on the shelf but isn’t sold is <strong>66%</strong>. Figure 1 proves that this median is fairly representative, so we are dealing with <strong>mostly near zero series</strong>. Two consequences run through everything that follows.</p>
+<p>First, <strong>a zero is information, not a gap.</strong> There is only one exception: the days before an item’s first price in <code>sell_prices.csv</code>, when it was not on the shelf at all. Those are dropped from every history (I tracked this effect by only keeping values from where a price tag has been attributed to an item). Everything else is a real zero — <strong>the item was available and nobody bought it</strong> — and it is part of what the forecast has to get right.</p>
+<p>Second, the evaluation metric over a period of zero sales cannot be a percentage error. Dividing by an actual of zero is undefined, and most actuals are zero.</p>
 </section>
 <section id="the-harness-comes-first" class="level2">
 <h2 class="anchored" data-anchor-id="the-harness-comes-first">The harness comes first</h2>
-<p>I set two forecast origins:</p>
+<p>I set two forecast origins, for two different purposes:</p>
 <div class="cell" data-execution_count="3">
 <div id="tbl-windows" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-execution_count="3">
 <figure class="quarto-float quarto-float-tbl figure">
@@ -327,9 +328,10 @@ Table&nbsp;1: The two windows. Every choice I make is made on the validation win
 </figure>
 </div>
 </div>
-<p>A (series, window) pair is scored only if it clears three conditions: at least 56 days (arbitrary, but reasonable) on sale before the origin, no missing day inside the window, and at least one unit sold in the window. The third is necessary — WMAPE and WQL divide by the window’s total, so a series that sells nothing has no defined error.</p>
-<p>What matters more than the conditions is that <strong>I report the count each one removes separately</strong>, and that the surviving list is frozen to disk. A roster that quietly changes between models turns every later comparison into a comparison of populations.</p>
-<p>Of the 500 sampled series, 473 are scorable on the validation window and 485 on the test window. In both cases every exclusion is the no-sale condition: none of the 500 is short of history, and none has a missing day inside either window.</p>
+<p>A (series, window) pair is scored only if it clears three conditions: 1. at least 56 days (arbitrary, but reasonable) on sale before the origin 2. no missing day inside the window 3. at least one unit sold in the window.</p>
+<p>The third is necessary — WMAPE and WQL divide by the window’s total, so a series that sells nothing has no defined error (cf.&nbsp;paragraph above).</p>
+<p>The surviving list is frozen to disk. A roster that quietly changes between models turns every later comparison into a comparison of populations, which would be undesirable.</p>
+<p>Of the 500 sampled series, <strong>473 are scorable</strong> on the validation window and <strong>485 on the test window</strong>. It so happens that every exclusion is the no-sale condition.</p>
 <section id="five-metrics-and-what-each-is-for" class="level3">
 <h3 class="anchored" data-anchor-id="five-metrics-and-what-each-is-for">Five metrics, and what each is for</h3>
 <table class="caption-top table">
@@ -348,17 +350,17 @@ Table&nbsp;1: The two windows. Every choice I make is made on the validation win
 <tbody>
 <tr class="odd">
 <td>MAE</td>
-<td>mean of <span class="math inline">\(\lvert y - \hat y\rvert\)</span></td>
+<td>mean of <span class="math inline">\(\lvert y - y_{pred} \rvert\)</span></td>
 <td>error in units sold</td>
 </tr>
 <tr class="even">
 <td>WMAPE</td>
-<td><span class="math inline">\(100 \cdot \sum \lvert y - \hat y\rvert / \sum y\)</span></td>
+<td><span class="math inline">\(100 \cdot \sum \lvert y - y_{pred}\rvert / \sum y\)</span></td>
 <td>scale-free, survives zeros: the headline</td>
 </tr>
 <tr class="odd">
 <td>P90</td>
-<td>90th percentile of <span class="math inline">\(\lvert y - \hat y\rvert\)</span></td>
+<td>90th percentile of <span class="math inline">\(\lvert y - y_{pred}\rvert\)</span></td>
 <td>the bad days</td>
 </tr>
 <tr class="even">
@@ -368,19 +370,18 @@ Table&nbsp;1: The two windows. Every choice I make is made on the validation win
 </tr>
 <tr class="odd">
 <td>RQL</td>
-<td><span class="math inline">\(100 \cdot \sum L_{0.2}(y, \hat y) / \sum y\)</span></td>
+<td><span class="math inline">\(100 \cdot \sum L_{0.2}(y, y_{pred}) / \sum y\)</span></td>
 <td>the point forecast, with over-prediction priced at four times under-prediction</td>
 </tr>
 </tbody>
 </table>
-<p><span class="math inline">\(L_q\)</span> is the quantile loss on a forecast <span class="math inline">\(f\)</span>: <span class="math inline">\(q\,(y - f)\)</span> when <span class="math inline">\(f\)</span> is too low, <span class="math inline">\((1-q)(f - y)\)</span> when it is too high. WQL applies it to each quantile forecast <span class="math inline">\(\hat y_q\)</span> in turn, which is where it is a proper scoring rule — minimised by reporting the true quantile. RQL applies <span class="math inline">\(L_{0.2}\)</span> to the point forecast <span class="math inline">\(\hat y\)</span> instead, because the asymmetry is meant to price the cost of acting on the number the model puts forward. Scoring it on the 0.2 quantile column would reward a model for submitting a deliberately low number: on this data that is worth a factor of about 2.8 at identical forecasting skill. All sums run over scored (series, day) pairs, never averaged per series and then averaged again.</p>
-<p>One identity decides how the next post must be read: <strong>for a model that only gives a point forecast, every quantile column is a copy of it, and WQL collapses to WMAPE/100.</strong> A probabilistic model can beat that number only by saying something true about its own uncertainty. So WQL is not a fair axis for comparing a point model with a distributional one; MAE, WMAPE, P90 and RQL are.</p>
-<p>I check the metric code against three cases whose answers are known in advance: a perfect forecast scores 0 everywhere; a constant zero forecast scores WMAPE 100, WQL 1 and RQL 20; and a point forecast’s WQL equals its WMAPE/100.</p>
+<p><span class="math inline">\(L_q\)</span> is the quantile loss on a forecast <span class="math inline">\(f\)</span>: <span class="math inline">\(q\,(y - f)\)</span> when <span class="math inline">\(f \leqslant y\)</span>, <span class="math inline">\((1-q)(f - y)\)</span> when <span class="math inline">\(f \geqslant y\)</span>. WQL applies it to each quantile forecast <span class="math inline">\(y_{pred,q}\)</span> in turn, and is a staple scoring rule. <strong>For distributional models, <span class="math inline">\(y_{pred,q}\)</span> refers to the median value.</strong> RQL applies <span class="math inline">\(L_{0.2}\)</span> to the point forecast <span class="math inline">\(y_{pred}\)</span> instead, because the asymmetry is meant to price the cost of acting on the number the model puts forward. Scoring it on the 0.2 quantile column would reward a model for submitting a deliberately low number: over-predicting costs 4 times more than under-predicting. This signal matters in practice as retailers want to know whether following the predictions means taking risks. If not mentioned, all sums run over scored (series, day) pairs, never averaged per series and then averaged again.</p>
+<p>One remark for <a href="../02-chronos2/">the next post</a>: <strong>for a model that only gives a point forecast, every quantile column is a copy of it, and WQL collapses to WMAPE/100.</strong> A probabilistic model can beat that number only by saying something true about its own uncertainty. So WQL is not a fair axis for comparing a point model with a distributional one; MAE, WMAPE, P90 and RQL are. However <strong>WQL will be our main decider for a batch of distributional models.</strong></p>
 </section>
 </section>
 <section id="three-naive-baselines" class="level2">
 <h2 class="anchored" data-anchor-id="three-naive-baselines">Three naive baselines</h2>
-<p>Always zero, repeat-last-week, and the mean of the last 28 days. On intermittent data the first is not absurd, and the third is a genuinely strong competitor — which is exactly why it is here.</p>
+<p>Always zero, repeat-last-week, and the mean of the last 28 days. On intermittent data the first is not absurd, and the third is a genuinely strong competitor.</p>
 <div class="cell" data-execution_count="5">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -442,28 +443,27 @@ Table&nbsp;2: Validation window. Lower is better everywhere.
 </figure>
 </div>
 </div>
-<p>Note the ordering: repeating last week is barely better than predicting nothing at all, while a flat 28-day mean removes about a fifth of the error. On series this sparse the weekly pattern of a single item is mostly noise, and averaging it away beats reproducing it.</p>
-<p>RQL inverts the ranking — the zero forecast wins it outright, 20 against 39. That is the metric doing its job, showing how low volume the real values mostly are.</p>
+<p>Note the ordering: repeating last week is barely better than predicting nothing at all, while a flat <strong>28-day mean removes about a fifth of the error</strong>. After all, on series this sparse the exact weekly pattern of a single item is mostly noise, and averaging it away beats reproducing it.</p>
+<p>RQL inverts the ranking — the zero forecast wins it outright, 20 against 39. The metric is doing its job, by showing how low volume the real values mostly are.</p>
 </section>
 <section id="the-features" class="level2">
 <h2 class="anchored" data-anchor-id="the-features">The features</h2>
-<p>Rather than invent a feature set, I reproduced one that is public and placed well: <a href="https://github.com/btrotta/kaggle-m5">btrotta/kaggle-m5</a> (<code>predict.py</code>), a top-4% M5 solution. Fifty-two features in four families:</p>
+<p>Rather than invent a feature set, which consumes a lot of time (and insight!), I reproduced one that is public and well ranked: <a href="https://github.com/btrotta/kaggle-m5">btrotta/kaggle-m5</a> (<code>predict.py</code>) is a top-4% M5 solution. It builds fifty-two features in four families:</p>
 <ul>
 <li><strong>the series’ own past</strong> — lags 1 to 7, means of the last 7/14/28 days, running mean and variance overall and per weekday;</li>
 <li><strong>the same, two levels up</strong> — the item’s department in its store, and the item across all stores, so a thin series borrows the shape of its neighbours;</li>
 <li><strong>calendar</strong> — weekday, month, SNAP benefit days, and an “event uplift” measured as mean sales <em>n</em> days after an event minus the same weekday a week later;</li>
 <li><strong>price</strong> — the current price and its change over 7 and 14 days, plus days since first sale.</li>
 </ul>
-<p>The strategy is <strong>direct</strong>: 28 models, one per forecast day. The model for day <em>k</em> sees sales only up to the origin, with its lag features shifted <em>k</em> days further back, so no forecast is ever fed back as an input and nothing in the window leaks.</p>
-<p>Five differences from the original are deliberate:</p>
+<p>The strategy is direct: <strong>28 models, one per forecast day</strong>. The model for day <em>k</em> sees sales only up to the origin, with its lag features shifted <em>k</em> days further back, so no forecast is ever fed back as an input and <strong>nothing in the window leaks</strong>.</p>
+<p>I strayed from the original in five places, deliberately:</p>
 <ul>
-<li>XGBoost instead of LightGBM, with the closest equivalent settings;</li>
+<li>XGBoost instead of LightGBM, with the closest equivalent settings (easier to run, and the core principle);</li>
 <li><strong>training on the 500-series sample</strong> rather than all 30,490 — though the department and item features are still computed on all of them;</li>
 <li>boosting rounds chosen by early stopping on the last 28 days <em>before</em> the origin, where the original stops on the window it then reports;</li>
 <li>the event uplift implemented as intended rather than as coded;</li>
-<li>missing days defined by the price file.</li>
+<li>missing days are defined by the price file.</li>
 </ul>
-<p>The second and third cost real accuracy, and I kept them anyway: a reproduction that scored <em>better</em> than the original would be the suspicious outcome.</p>
 </section>
 <section id="what-it-buys" class="level2">
 <h2 class="anchored" data-anchor-id="what-it-buys">What it buys</h2>
@@ -608,14 +608,14 @@ Table&nbsp;3: XGBoost against the baselines, both windows.
 <img src="index_files/figure-html/fig-buckets-output-1.png" width="1190" height="418" class="figure-img">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-buckets-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;2: Validation window, by horizon bucket. Baselines in grey. The gap to the 28-day mean opens only in the second fortnight.
+Figure&nbsp;2: Validation window, by horizon bucket. Baselines in grey. The gap to the 28-day mean opens except in the second bucket.
 </figcaption>
 </figure>
 </div>
 </div>
 </div>
-<p>Fifty-two features, 28 trained models and roughly 84 minutes of CPU at the test origin, against a flat mean of the last 28 days: <strong>0.8 WMAPE points on validation, 1.2 on test.</strong> The horizon view says where that comes from — the two are nearly tied over the second week, then the mean decays while the model does not, which is the one thing a model with a calendar in it ought to manage. The first week is to the model’s advantage too.</p>
-<p>The per-series view is blunter still.</p>
+<p>With the 52 features, we get <strong>0.8 WMAPE points on validation, 1.2 on test.</strong> The horizon view says where that comes from — the two are nearly tied over the second week, then the mean decays while the model does not, which is the one thing a model with a calendar in it ought to manage. The first week is to the model’s advantage too: it is where it should be strongest after all.</p>
+<p>The per-series view is blunter.</p>
 <div id="cell-fig-index" class="cell" data-execution_count="8">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -647,14 +647,14 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 </div>
 </div>
 </div>
-<p>XGBoost has the lower WQL on 43% of series. It loses on the majority of items and still wins overall, because the items it wins on are the ones that sell. Pooled metrics weight by volume; a per-series count does not. Both numbers are true, and quoting only the pooled one is exactly the kind of claim I built this harness to catch.</p>
+<p>XGBoost has the lower WQL (<em>ie</em> WMAPE) on 43% of series. It loses on the majority of items and still wins overall, because the items it wins on are the ones that sell. Therefore, it reacts better to changes. The core difficulty of the dataset really is how low the values are.</p>
 </section>
 <section id="what-the-baseline-settles" class="level2">
 <h2 class="anchored" data-anchor-id="what-the-baseline-settles">What the baseline settles</h2>
 <p>Three things carry into the next post.</p>
-<p><strong>A number to beat.</strong> WMAPE 78.8 on validation, 76.4 on test — and the honest framing is that most of that was already available from a 28-day mean.</p>
-<p><strong>An axis on which to beat it.</strong> XGBoost returns a point forecast, so the comparison is MAE, WMAPE and P90. Its WQL is arithmetic, not a measurement.</p>
-<p><strong>A caveat that cuts the other way.</strong> XGBoost is trained on squared error, so it estimates a conditional mean. On absolute-error metrics the optimal point forecast is the <em>median</em>, so any model that returns a median starts with a structural advantage on MAE and WMAPE that has nothing to do with forecasting better. Chronos-2 returns a median, so in case of a tight match strong conclusions could be risky.</p>
+<p><strong>The dataset’s difficulty.</strong> As we showed, this prediction problem is made much harder by the low volume of the series (which are integer values, so it isn’t just a matter of scaling).</p>
+<p><strong>A number to beat.</strong> WMAPE 78.8 on validation, 76.4 on test (first bucket, but others will matter of course) — and the honest framing is that most of that was already available from a 28-day mean, despite how rough of an estimate it is.</p>
+<p><strong>A caveat.</strong> XGBoost is trained on squared error, so it estimates a conditional mean. On absolute-error metrics the optimal point forecast is the <em>median</em>, so any model that returns a median starts with a structural advantage on MAE and WMAPE that has nothing to do with forecasting better. However, Chronos-2 returns a median. Moreover, because it is distributional, Chronos-2 has a slight edge. When looking at WQL, without regards to if the derived point forecast is actually better. So in case of a tight match, strong conclusions could be risky.</p>
 
 
 <!-- -->
@@ -1114,8 +1114,8 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
   });
   </script><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="an">title:</span><span class="co"> "A baseline that earns its place"</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="an">description:</span><span class="co"> "Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness every later claim rests on. Fifty-two engineered features beat a 28-day mean by less than one point."</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="an">title:</span><span class="co"> "The baseline: XGBoost"</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="an">description:</span><span class="co"> "Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness. Surprisingly, fifty-two engineered features beat a 28-day mean by less than one point."</span></span>
 <span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="an">order:</span><span class="co"> 1</span></span>
 <span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="an">date:</span><span class="co"> "2026-11-01"</span></span>
 <span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="an">categories:</span><span class="co"> [M5, XGBoost, evaluation]</span></span>
@@ -1131,21 +1131,21 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 <span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
 <span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
 <span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>A foundation model is only impressive against something. So I began by building the reference</span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>Testing our foundation model only makes sense when put against something. So I began by building the reference</span>
 <span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a>it would have to beat: a feature-engineered gradient-boosting model, in the tradition that</span>
 <span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a>won M5, inspired by a public top-4% solution.</span>
 <span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-25"><a href="#cb6-25" aria-hidden="true" tabindex="-1"></a>The result worth stating up front is how little those 52 engineered features buy over the</span>
-<span id="cb6-26"><a href="#cb6-26" aria-hidden="true" tabindex="-1"></a>mean of the last 28 days. That is not a criticism of the solution I reproduced — I reduced it</span>
-<span id="cb6-27"><a href="#cb6-27" aria-hidden="true" tabindex="-1"></a>to a single XGBoost model where the original used LightGBM — but it is what makes the</span>
-<span id="cb6-28"><a href="#cb6-28" aria-hidden="true" tabindex="-1"></a>comparison in <span class="co">[</span><span class="ot">the next post</span><span class="co">](../02-chronos2/)</span> far more interesting.</span>
+<span id="cb6-25"><a href="#cb6-25" aria-hidden="true" tabindex="-1"></a>The result worth stating up front is how little the feature engineering buys over the</span>
+<span id="cb6-26"><a href="#cb6-26" aria-hidden="true" tabindex="-1"></a>"mean of the last 28 days" elementary model. That is not a criticism of the solution reproduced — I reduced it</span>
+<span id="cb6-27"><a href="#cb6-27" aria-hidden="true" tabindex="-1"></a>to a single XGBoost model where the original used LightGBM — but it makes the</span>
+<span id="cb6-28"><a href="#cb6-28" aria-hidden="true" tabindex="-1"></a>comparison in <span class="co">[</span><span class="ot">the next post</span><span class="co">](../02-chronos2/)</span> all the more interesting.</span>
 <span id="cb6-29"><a href="#cb6-29" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-30"><a href="#cb6-30" aria-hidden="true" tabindex="-1"></a><span class="fu">## The dataset</span></span>
 <span id="cb6-31"><a href="#cb6-31" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-32"><a href="#cb6-32" aria-hidden="true" tabindex="-1"></a>One target value per series per day: units of one item sold in one Walmart store. History</span>
-<span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a>runs 2011-01-29 to 2016-05-22, 1,941 days, 30,490 series. I work throughout on a frozen</span>
-<span id="cb6-34"><a href="#cb6-34" aria-hidden="true" tabindex="-1"></a>random sample of 500 series, drawn once and saved, so every number in these three posts comes</span>
-<span id="cb6-35"><a href="#cb6-35" aria-hidden="true" tabindex="-1"></a>from the same items. The sample is for tractability, nothing more.</span>
+<span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a>runs 2011-01-29 to 2016-05-22, 1,941 days, 30,490 series. **The task is to predict 28 days ahead.**</span>
+<span id="cb6-34"><a href="#cb6-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-35"><a href="#cb6-35" aria-hidden="true" tabindex="-1"></a>I work throughout on a frozen random sample of 500 series, drawn once and saved, so every number in these three posts comes from the same items. The sample is for practical computing power reasons, as the whole study was made on a 10 year old laptop.</span>
 <span id="cb6-36"><a href="#cb6-36" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-39"><a href="#cb6-39" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
 <span id="cb6-40"><a href="#cb6-40" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-intermittency</span></span>
@@ -1175,21 +1175,21 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 <span id="cb6-64"><a href="#cb6-64" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
 <span id="cb6-65"><a href="#cb6-65" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
 <span id="cb6-66"><a href="#cb6-66" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-67"><a href="#cb6-67" aria-hidden="true" tabindex="-1"></a>The median series sells <span class="in">`{python} f"{median_daily:.2f}"`</span> units a day and is silent on</span>
-<span id="cb6-68"><a href="#cb6-68" aria-hidden="true" tabindex="-1"></a><span class="in">`{python} f"{median_zero:.0%}"`</span> of the days it is on the shelf. Two consequences run through</span>
+<span id="cb6-67"><a href="#cb6-67" aria-hidden="true" tabindex="-1"></a>The median sells of the averaged series is **`{python} f"{median_daily:.2f}"` units a day**, and the median share of days a series is on the shelf but isn't sold is</span>
+<span id="cb6-68"><a href="#cb6-68" aria-hidden="true" tabindex="-1"></a>**`{python} f"{median_zero:.0%}"`**. Figure 1 proves that this median is fairly representative, so we are dealing with **mostly near zero series**. Two consequences run through</span>
 <span id="cb6-69"><a href="#cb6-69" aria-hidden="true" tabindex="-1"></a>everything that follows.</span>
 <span id="cb6-70"><a href="#cb6-70" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-71"><a href="#cb6-71" aria-hidden="true" tabindex="-1"></a>First, **a zero is usually information, not a gap.** The one exception is structural: days</span>
+<span id="cb6-71"><a href="#cb6-71" aria-hidden="true" tabindex="-1"></a>First, **a zero is information, not a gap.** There is only one exception: the days</span>
 <span id="cb6-72"><a href="#cb6-72" aria-hidden="true" tabindex="-1"></a>before an item's first price in <span class="in">`sell_prices.csv`</span>, when it was not on the shelf at all.</span>
-<span id="cb6-73"><a href="#cb6-73" aria-hidden="true" tabindex="-1"></a>Those are dropped from every history. Everything else is a real zero — the item was</span>
-<span id="cb6-74"><a href="#cb6-74" aria-hidden="true" tabindex="-1"></a>available and nobody bought it — and it is part of what the forecast has to get right.</span>
+<span id="cb6-73"><a href="#cb6-73" aria-hidden="true" tabindex="-1"></a>Those are dropped from every history (I tracked this effect by only keeping values from where a price tag has been attributed to an item). Everything else is a real zero — **the item was</span>
+<span id="cb6-74"><a href="#cb6-74" aria-hidden="true" tabindex="-1"></a>available and nobody bought it** — and it is part of what the forecast has to get right.</span>
 <span id="cb6-75"><a href="#cb6-75" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-76"><a href="#cb6-76" aria-hidden="true" tabindex="-1"></a>Second, **the evaluation metric over a period of zero sales cannot be a percentage error.**</span>
+<span id="cb6-76"><a href="#cb6-76" aria-hidden="true" tabindex="-1"></a>Second, the evaluation metric over a period of zero sales cannot be a percentage error.</span>
 <span id="cb6-77"><a href="#cb6-77" aria-hidden="true" tabindex="-1"></a>Dividing by an actual of zero is undefined, and most actuals are zero.</span>
 <span id="cb6-78"><a href="#cb6-78" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-79"><a href="#cb6-79" aria-hidden="true" tabindex="-1"></a><span class="fu">## The harness comes first</span></span>
 <span id="cb6-80"><a href="#cb6-80" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-81"><a href="#cb6-81" aria-hidden="true" tabindex="-1"></a>I set two forecast origins:</span>
+<span id="cb6-81"><a href="#cb6-81" aria-hidden="true" tabindex="-1"></a>I set two forecast origins, for two different purposes:</span>
 <span id="cb6-82"><a href="#cb6-82" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-85"><a href="#cb6-85" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
 <span id="cb6-86"><a href="#cb6-86" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: tbl-windows</span></span>
@@ -1198,83 +1198,83 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 <span id="cb6-89"><a href="#cb6-89" aria-hidden="true" tabindex="-1"></a>md(WINDOWS)</span>
 <span id="cb6-90"><a href="#cb6-90" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
 <span id="cb6-91"><a href="#cb6-91" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-92"><a href="#cb6-92" aria-hidden="true" tabindex="-1"></a>A (series, window) pair is scored only if it clears three conditions: at least 56 days</span>
-<span id="cb6-93"><a href="#cb6-93" aria-hidden="true" tabindex="-1"></a>(arbitrary, but reasonable) on sale before the origin, no missing day inside the window, and</span>
-<span id="cb6-94"><a href="#cb6-94" aria-hidden="true" tabindex="-1"></a>at least one unit sold in the window. The third is necessary — WMAPE and WQL divide by the</span>
-<span id="cb6-95"><a href="#cb6-95" aria-hidden="true" tabindex="-1"></a>window's total, so a series that sells nothing has no defined error.</span>
+<span id="cb6-92"><a href="#cb6-92" aria-hidden="true" tabindex="-1"></a>A (series, window) pair is scored only if it clears three conditions: </span>
+<span id="cb6-93"><a href="#cb6-93" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>at least 56 days (arbitrary, but reasonable) on sale before the origin</span>
+<span id="cb6-94"><a href="#cb6-94" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>no missing day inside the window</span>
+<span id="cb6-95"><a href="#cb6-95" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>at least one unit sold in the window.</span>
 <span id="cb6-96"><a href="#cb6-96" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-97"><a href="#cb6-97" aria-hidden="true" tabindex="-1"></a>What matters more than the conditions is that **I report the count each one removes</span>
-<span id="cb6-98"><a href="#cb6-98" aria-hidden="true" tabindex="-1"></a>separately**, and that the surviving list is frozen to disk. A roster that quietly changes</span>
-<span id="cb6-99"><a href="#cb6-99" aria-hidden="true" tabindex="-1"></a>between models turns every later comparison into a comparison of populations.</span>
-<span id="cb6-100"><a href="#cb6-100" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-103"><a href="#cb6-103" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb6-104"><a href="#cb6-104" aria-hidden="true" tabindex="-1"></a><span class="co">#| echo: false</span></span>
-<span id="cb6-105"><a href="#cb6-105" aria-hidden="true" tabindex="-1"></a>scorable <span class="op">=</span> <span class="bu">dict</span>(EVAL_ROSTER.group_by(<span class="st">"role"</span>)</span>
-<span id="cb6-106"><a href="#cb6-106" aria-hidden="true" tabindex="-1"></a>                .agg(pl.col(<span class="st">"id"</span>).n_unique().alias(<span class="st">"series"</span>))</span>
-<span id="cb6-107"><a href="#cb6-107" aria-hidden="true" tabindex="-1"></a>                .iter_rows())</span>
-<span id="cb6-108"><a href="#cb6-108" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-109"><a href="#cb6-109" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-110"><a href="#cb6-110" aria-hidden="true" tabindex="-1"></a>Of the 500 sampled series, <span class="in">`{python} f"{scorable['validation']}"`</span> are scorable on the</span>
-<span id="cb6-111"><a href="#cb6-111" aria-hidden="true" tabindex="-1"></a>validation window and <span class="in">`{python} f"{scorable['test']}"`</span> on the test window. In both cases</span>
-<span id="cb6-112"><a href="#cb6-112" aria-hidden="true" tabindex="-1"></a>every exclusion is the no-sale condition: none of the 500 is short of history, and none has</span>
-<span id="cb6-113"><a href="#cb6-113" aria-hidden="true" tabindex="-1"></a>a missing day inside either window.</span>
-<span id="cb6-114"><a href="#cb6-114" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-115"><a href="#cb6-115" aria-hidden="true" tabindex="-1"></a><span class="fu">### Five metrics, and what each is for</span></span>
-<span id="cb6-116"><a href="#cb6-116" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-117"><a href="#cb6-117" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> metric <span class="pp">|</span> definition <span class="pp">|</span> what it is for <span class="pp">|</span></span>
-<span id="cb6-118"><a href="#cb6-118" aria-hidden="true" tabindex="-1"></a><span class="pp">|---|---|---|</span></span>
-<span id="cb6-119"><a href="#cb6-119" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> MAE <span class="pp">|</span> mean of $\lvert y - \hat y\rvert$ <span class="pp">|</span> error in units sold <span class="pp">|</span></span>
-<span id="cb6-120"><a href="#cb6-120" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> WMAPE <span class="pp">|</span> $100 \cdot \sum \lvert y - \hat y\rvert / \sum y$ <span class="pp">|</span> scale-free, survives zeros: the headline <span class="pp">|</span></span>
-<span id="cb6-121"><a href="#cb6-121" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> P90 <span class="pp">|</span> 90th percentile of $\lvert y - \hat y\rvert$ <span class="pp">|</span> the bad days <span class="pp">|</span></span>
-<span id="cb6-122"><a href="#cb6-122" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> WQL <span class="pp">|</span> mean over $q \in <span class="sc">\{</span>0.1,\dots,0.9<span class="sc">\}</span>$ of $2 \sum L_q / \sum y$ <span class="pp">|</span> the whole forecast distribution <span class="pp">|</span></span>
-<span id="cb6-123"><a href="#cb6-123" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> RQL <span class="pp">|</span> $100 \cdot \sum L_{0.2}(y, \hat y) / \sum y$ <span class="pp">|</span> the point forecast, with over-prediction priced at four times under-prediction <span class="pp">|</span></span>
-<span id="cb6-124"><a href="#cb6-124" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-125"><a href="#cb6-125" aria-hidden="true" tabindex="-1"></a>$L_q$ is the quantile loss on a forecast $f$: $q\,(y - f)$ when $f$ is too low,</span>
-<span id="cb6-126"><a href="#cb6-126" aria-hidden="true" tabindex="-1"></a>$(1-q)(f - y)$ when it is too high. WQL applies it to each quantile forecast $\hat y_q$ in</span>
-<span id="cb6-127"><a href="#cb6-127" aria-hidden="true" tabindex="-1"></a>turn, which is where it is a proper scoring rule — minimised by reporting the true quantile.</span>
-<span id="cb6-128"><a href="#cb6-128" aria-hidden="true" tabindex="-1"></a>RQL applies $L_{0.2}$ to the point forecast $\hat y$ instead, because the asymmetry is meant</span>
-<span id="cb6-129"><a href="#cb6-129" aria-hidden="true" tabindex="-1"></a>to price the cost of acting on the number the model puts forward. Scoring it on the 0.2</span>
-<span id="cb6-130"><a href="#cb6-130" aria-hidden="true" tabindex="-1"></a>quantile column would reward a model for submitting a deliberately low number: on this data</span>
-<span id="cb6-131"><a href="#cb6-131" aria-hidden="true" tabindex="-1"></a>that is worth a factor of about 2.8 at identical forecasting skill. All sums run over scored</span>
-<span id="cb6-132"><a href="#cb6-132" aria-hidden="true" tabindex="-1"></a>(series, day) pairs, never averaged per series and then averaged again.</span>
-<span id="cb6-133"><a href="#cb6-133" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-134"><a href="#cb6-134" aria-hidden="true" tabindex="-1"></a>One identity decides how the next post must be read: **for a model that only gives a point</span>
-<span id="cb6-135"><a href="#cb6-135" aria-hidden="true" tabindex="-1"></a>forecast, every quantile column is a copy of it, and WQL collapses to WMAPE/100.** A</span>
-<span id="cb6-136"><a href="#cb6-136" aria-hidden="true" tabindex="-1"></a>probabilistic model can beat that number only by saying something true about its own</span>
-<span id="cb6-137"><a href="#cb6-137" aria-hidden="true" tabindex="-1"></a>uncertainty. So WQL is not a fair axis for comparing a point model with a distributional</span>
-<span id="cb6-138"><a href="#cb6-138" aria-hidden="true" tabindex="-1"></a>one; MAE, WMAPE, P90 and RQL are.</span>
-<span id="cb6-139"><a href="#cb6-139" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-140"><a href="#cb6-140" aria-hidden="true" tabindex="-1"></a>I check the metric code against three cases whose answers are known in advance: a perfect</span>
-<span id="cb6-141"><a href="#cb6-141" aria-hidden="true" tabindex="-1"></a>forecast scores 0 everywhere; a constant zero forecast scores WMAPE 100, WQL 1 and RQL 20;</span>
-<span id="cb6-142"><a href="#cb6-142" aria-hidden="true" tabindex="-1"></a>and a point forecast's WQL equals its WMAPE/100.</span>
+<span id="cb6-97"><a href="#cb6-97" aria-hidden="true" tabindex="-1"></a>The third is necessary — WMAPE and WQL divide by the</span>
+<span id="cb6-98"><a href="#cb6-98" aria-hidden="true" tabindex="-1"></a>window's total, so a series that sells nothing has no defined error (cf. paragraph above).</span>
+<span id="cb6-99"><a href="#cb6-99" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-100"><a href="#cb6-100" aria-hidden="true" tabindex="-1"></a>The surviving list is frozen to disk. A roster that quietly changes</span>
+<span id="cb6-101"><a href="#cb6-101" aria-hidden="true" tabindex="-1"></a>between models turns every later comparison into a comparison of populations, which would be undesirable.</span>
+<span id="cb6-102"><a href="#cb6-102" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-105"><a href="#cb6-105" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb6-106"><a href="#cb6-106" aria-hidden="true" tabindex="-1"></a><span class="co">#| echo: false</span></span>
+<span id="cb6-107"><a href="#cb6-107" aria-hidden="true" tabindex="-1"></a>scorable <span class="op">=</span> <span class="bu">dict</span>(EVAL_ROSTER.group_by(<span class="st">"role"</span>)</span>
+<span id="cb6-108"><a href="#cb6-108" aria-hidden="true" tabindex="-1"></a>                .agg(pl.col(<span class="st">"id"</span>).n_unique().alias(<span class="st">"series"</span>))</span>
+<span id="cb6-109"><a href="#cb6-109" aria-hidden="true" tabindex="-1"></a>                .iter_rows())</span>
+<span id="cb6-110"><a href="#cb6-110" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-111"><a href="#cb6-111" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-112"><a href="#cb6-112" aria-hidden="true" tabindex="-1"></a>Of the 500 sampled series, **`{python} f"{scorable['validation']}"` are scorable** on the</span>
+<span id="cb6-113"><a href="#cb6-113" aria-hidden="true" tabindex="-1"></a>validation window and **`{python} f"{scorable['test']}"` on the test window**. It so happens that</span>
+<span id="cb6-114"><a href="#cb6-114" aria-hidden="true" tabindex="-1"></a>every exclusion is the no-sale condition.</span>
+<span id="cb6-115"><a href="#cb6-115" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-116"><a href="#cb6-116" aria-hidden="true" tabindex="-1"></a><span class="fu">### Five metrics, and what each is for</span></span>
+<span id="cb6-117"><a href="#cb6-117" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-118"><a href="#cb6-118" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> metric <span class="pp">|</span> definition <span class="pp">|</span> what it is for <span class="pp">|</span></span>
+<span id="cb6-119"><a href="#cb6-119" aria-hidden="true" tabindex="-1"></a><span class="pp">|---|---|---|</span></span>
+<span id="cb6-120"><a href="#cb6-120" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> MAE <span class="pp">|</span> mean of $\lvert y - y_{pred} \rvert$ <span class="pp">|</span> error in units sold <span class="pp">|</span></span>
+<span id="cb6-121"><a href="#cb6-121" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> WMAPE <span class="pp">|</span> $100 \cdot \sum \lvert y - y_{pred}\rvert / \sum y$ <span class="pp">|</span> scale-free, survives zeros: the headline <span class="pp">|</span></span>
+<span id="cb6-122"><a href="#cb6-122" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> P90 <span class="pp">|</span> 90th percentile of $\lvert y - y_{pred}\rvert$ <span class="pp">|</span> the bad days <span class="pp">|</span></span>
+<span id="cb6-123"><a href="#cb6-123" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> WQL <span class="pp">|</span> mean over $q \in <span class="sc">\{</span>0.1,\dots,0.9<span class="sc">\}</span>$ of $2 \sum L_q / \sum y$ <span class="pp">|</span> the whole forecast distribution <span class="pp">|</span></span>
+<span id="cb6-124"><a href="#cb6-124" aria-hidden="true" tabindex="-1"></a><span class="pp">|</span> RQL <span class="pp">|</span> $100 \cdot \sum L_{0.2}(y, y_{pred}) / \sum y$ <span class="pp">|</span> the point forecast, with over-prediction priced at four times under-prediction <span class="pp">|</span></span>
+<span id="cb6-125"><a href="#cb6-125" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-126"><a href="#cb6-126" aria-hidden="true" tabindex="-1"></a>$L_q$ is the quantile loss on a forecast $f$: $q\,(y - f)$ when $f \leqslant y$,</span>
+<span id="cb6-127"><a href="#cb6-127" aria-hidden="true" tabindex="-1"></a>$(1-q)(f - y)$ when $f \geqslant y$. WQL applies it to each quantile forecast $y_{pred,q}$ in</span>
+<span id="cb6-128"><a href="#cb6-128" aria-hidden="true" tabindex="-1"></a>turn, and is a staple scoring rule. **For distributional models, $y_{pred,q}$ refers to the median value.**</span>
+<span id="cb6-129"><a href="#cb6-129" aria-hidden="true" tabindex="-1"></a>RQL applies $L_{0.2}$ to the point forecast $y_{pred}$ instead, because the asymmetry is meant</span>
+<span id="cb6-130"><a href="#cb6-130" aria-hidden="true" tabindex="-1"></a>to price the cost of acting on the number the model puts forward. Scoring it on the 0.2</span>
+<span id="cb6-131"><a href="#cb6-131" aria-hidden="true" tabindex="-1"></a>quantile column would reward a model for submitting a deliberately low number: over-predicting </span>
+<span id="cb6-132"><a href="#cb6-132" aria-hidden="true" tabindex="-1"></a>costs 4 times more than under-predicting. This signal matters in practice as retailers want to know</span>
+<span id="cb6-133"><a href="#cb6-133" aria-hidden="true" tabindex="-1"></a> whether following the predictions means taking risks. If not mentioned, all sums run over scored</span>
+<span id="cb6-134"><a href="#cb6-134" aria-hidden="true" tabindex="-1"></a>(series, day) pairs, never averaged per series and then averaged again.</span>
+<span id="cb6-135"><a href="#cb6-135" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-136"><a href="#cb6-136" aria-hidden="true" tabindex="-1"></a>One remark for <span class="co">[</span><span class="ot">the next post</span><span class="co">](../02-chronos2/)</span>: **for a model that only gives a point</span>
+<span id="cb6-137"><a href="#cb6-137" aria-hidden="true" tabindex="-1"></a>forecast, every quantile column is a copy of it, and WQL collapses to WMAPE/100.** A</span>
+<span id="cb6-138"><a href="#cb6-138" aria-hidden="true" tabindex="-1"></a>probabilistic model can beat that number only by saying something true about its own</span>
+<span id="cb6-139"><a href="#cb6-139" aria-hidden="true" tabindex="-1"></a>uncertainty. So WQL is not a fair axis for comparing a point model with a distributional</span>
+<span id="cb6-140"><a href="#cb6-140" aria-hidden="true" tabindex="-1"></a>one; MAE, WMAPE, P90 and RQL are. However **WQL will be our main decider for a batch of </span>
+<span id="cb6-141"><a href="#cb6-141" aria-hidden="true" tabindex="-1"></a>distributional models.**</span>
+<span id="cb6-142"><a href="#cb6-142" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-143"><a href="#cb6-143" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-144"><a href="#cb6-144" aria-hidden="true" tabindex="-1"></a><span class="fu">## Three naive baselines</span></span>
 <span id="cb6-145"><a href="#cb6-145" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-146"><a href="#cb6-146" aria-hidden="true" tabindex="-1"></a>Always zero, repeat-last-week, and the mean of the last 28 days. On intermittent data the</span>
-<span id="cb6-147"><a href="#cb6-147" aria-hidden="true" tabindex="-1"></a>first is not absurd, and the third is a genuinely strong competitor — which is exactly why</span>
-<span id="cb6-148"><a href="#cb6-148" aria-hidden="true" tabindex="-1"></a>it is here.</span>
-<span id="cb6-149"><a href="#cb6-149" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-152"><a href="#cb6-152" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb6-153"><a href="#cb6-153" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: tbl-baselines</span></span>
-<span id="cb6-154"><a href="#cb6-154" aria-hidden="true" tabindex="-1"></a><span class="co">#| tbl-cap: "Validation window. Lower is better everywhere."</span></span>
-<span id="cb6-155"><a href="#cb6-155" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
-<span id="cb6-156"><a href="#cb6-156" aria-hidden="true" tabindex="-1"></a>baselines <span class="op">=</span> [<span class="st">"zero"</span>, <span class="st">"seasonal_naive"</span>, <span class="st">"moving_average_28d"</span>]</span>
-<span id="cb6-157"><a href="#cb6-157" aria-hidden="true" tabindex="-1"></a>md(rename_models(table_of(baselines, <span class="st">"validation"</span>))</span>
-<span id="cb6-158"><a href="#cb6-158" aria-hidden="true" tabindex="-1"></a>   .select([<span class="st">"model"</span>, <span class="st">"n_series"</span>] <span class="op">+</span> metrics.METRICS).sort(<span class="st">"WMAPE"</span>))</span>
-<span id="cb6-159"><a href="#cb6-159" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-160"><a href="#cb6-160" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-161"><a href="#cb6-161" aria-hidden="true" tabindex="-1"></a>Note the ordering: repeating last week is barely better than predicting nothing at all,</span>
-<span id="cb6-162"><a href="#cb6-162" aria-hidden="true" tabindex="-1"></a>while a flat 28-day mean removes about a fifth of the error. On series this sparse the</span>
-<span id="cb6-163"><a href="#cb6-163" aria-hidden="true" tabindex="-1"></a>weekly pattern of a single item is mostly noise, and averaging it away beats reproducing it.</span>
-<span id="cb6-164"><a href="#cb6-164" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-165"><a href="#cb6-165" aria-hidden="true" tabindex="-1"></a>RQL inverts the ranking — the zero forecast wins it outright, 20 against 39. That is the</span>
-<span id="cb6-166"><a href="#cb6-166" aria-hidden="true" tabindex="-1"></a>metric doing its job, showing how low volume the real values mostly are.</span>
-<span id="cb6-167"><a href="#cb6-167" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-168"><a href="#cb6-168" aria-hidden="true" tabindex="-1"></a><span class="fu">## The features</span></span>
-<span id="cb6-169"><a href="#cb6-169" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-170"><a href="#cb6-170" aria-hidden="true" tabindex="-1"></a>Rather than invent a feature set, I reproduced one that is public and placed well:</span>
-<span id="cb6-171"><a href="#cb6-171" aria-hidden="true" tabindex="-1"></a><span class="co">[</span><span class="ot">btrotta/kaggle-m5</span><span class="co">](https://github.com/btrotta/kaggle-m5)</span> (<span class="in">`predict.py`</span>), a top-4% M5</span>
-<span id="cb6-172"><a href="#cb6-172" aria-hidden="true" tabindex="-1"></a>solution. Fifty-two features in four families:</span>
+<span id="cb6-147"><a href="#cb6-147" aria-hidden="true" tabindex="-1"></a>first is not absurd, and the third is a genuinely strong competitor.</span>
+<span id="cb6-148"><a href="#cb6-148" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-151"><a href="#cb6-151" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb6-152"><a href="#cb6-152" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: tbl-baselines</span></span>
+<span id="cb6-153"><a href="#cb6-153" aria-hidden="true" tabindex="-1"></a><span class="co">#| tbl-cap: "Validation window. Lower is better everywhere."</span></span>
+<span id="cb6-154"><a href="#cb6-154" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
+<span id="cb6-155"><a href="#cb6-155" aria-hidden="true" tabindex="-1"></a>baselines <span class="op">=</span> [<span class="st">"zero"</span>, <span class="st">"seasonal_naive"</span>, <span class="st">"moving_average_28d"</span>]</span>
+<span id="cb6-156"><a href="#cb6-156" aria-hidden="true" tabindex="-1"></a>md(rename_models(table_of(baselines, <span class="st">"validation"</span>))</span>
+<span id="cb6-157"><a href="#cb6-157" aria-hidden="true" tabindex="-1"></a>   .select([<span class="st">"model"</span>, <span class="st">"n_series"</span>] <span class="op">+</span> metrics.METRICS).sort(<span class="st">"WMAPE"</span>))</span>
+<span id="cb6-158"><a href="#cb6-158" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-159"><a href="#cb6-159" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-160"><a href="#cb6-160" aria-hidden="true" tabindex="-1"></a>Note the ordering: repeating last week is barely better than predicting nothing at all,</span>
+<span id="cb6-161"><a href="#cb6-161" aria-hidden="true" tabindex="-1"></a>while a flat **28-day mean removes about a fifth of the error**. After all, on series this sparse the exact</span>
+<span id="cb6-162"><a href="#cb6-162" aria-hidden="true" tabindex="-1"></a>weekly pattern of a single item is mostly noise, and averaging it away beats reproducing it.</span>
+<span id="cb6-163"><a href="#cb6-163" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-164"><a href="#cb6-164" aria-hidden="true" tabindex="-1"></a>RQL inverts the ranking — the zero forecast wins it outright, 20 against 39. The</span>
+<span id="cb6-165"><a href="#cb6-165" aria-hidden="true" tabindex="-1"></a>metric is doing its job, by showing how low volume the real values mostly are.</span>
+<span id="cb6-166"><a href="#cb6-166" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-167"><a href="#cb6-167" aria-hidden="true" tabindex="-1"></a><span class="fu">## The features</span></span>
+<span id="cb6-168"><a href="#cb6-168" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-169"><a href="#cb6-169" aria-hidden="true" tabindex="-1"></a>Rather than invent a feature set, which consumes a lot of time (and insight!), I reproduced </span>
+<span id="cb6-170"><a href="#cb6-170" aria-hidden="true" tabindex="-1"></a>one that is public and well ranked:</span>
+<span id="cb6-171"><a href="#cb6-171" aria-hidden="true" tabindex="-1"></a><span class="co">[</span><span class="ot">btrotta/kaggle-m5</span><span class="co">](https://github.com/btrotta/kaggle-m5)</span> (<span class="in">`predict.py`</span>) is a top-4% M5</span>
+<span id="cb6-172"><a href="#cb6-172" aria-hidden="true" tabindex="-1"></a>solution. It builds fifty-two features in four families:</span>
 <span id="cb6-173"><a href="#cb6-173" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-174"><a href="#cb6-174" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**the series' own past** — lags 1 to 7, means of the last 7/14/28 days, running mean and</span>
 <span id="cb6-175"><a href="#cb6-175" aria-hidden="true" tabindex="-1"></a>  variance overall and per weekday;</span>
@@ -1284,93 +1284,92 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 <span id="cb6-179"><a href="#cb6-179" aria-hidden="true" tabindex="-1"></a>  sales *n* days after an event minus the same weekday a week later;</span>
 <span id="cb6-180"><a href="#cb6-180" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**price** — the current price and its change over 7 and 14 days, plus days since first sale.</span>
 <span id="cb6-181"><a href="#cb6-181" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-182"><a href="#cb6-182" aria-hidden="true" tabindex="-1"></a>The strategy is **direct**: 28 models, one per forecast day. The model for day *k* sees</span>
+<span id="cb6-182"><a href="#cb6-182" aria-hidden="true" tabindex="-1"></a>The strategy is direct: **28 models, one per forecast day**. The model for day *k* sees</span>
 <span id="cb6-183"><a href="#cb6-183" aria-hidden="true" tabindex="-1"></a>sales only up to the origin, with its lag features shifted *k* days further back, so no</span>
-<span id="cb6-184"><a href="#cb6-184" aria-hidden="true" tabindex="-1"></a>forecast is ever fed back as an input and nothing in the window leaks.</span>
+<span id="cb6-184"><a href="#cb6-184" aria-hidden="true" tabindex="-1"></a>forecast is ever fed back as an input and **nothing in the window leaks**.</span>
 <span id="cb6-185"><a href="#cb6-185" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-186"><a href="#cb6-186" aria-hidden="true" tabindex="-1"></a>Five differences from the original are deliberate:</span>
+<span id="cb6-186"><a href="#cb6-186" aria-hidden="true" tabindex="-1"></a>I strayed from the original in five places, deliberately:</span>
 <span id="cb6-187"><a href="#cb6-187" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-188"><a href="#cb6-188" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>XGBoost instead of LightGBM, with the closest equivalent settings;</span>
+<span id="cb6-188"><a href="#cb6-188" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>XGBoost instead of LightGBM, with the closest equivalent settings (easier to run, and the core principle);</span>
 <span id="cb6-189"><a href="#cb6-189" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**training on the 500-series sample** rather than all 30,490 — though the department and</span>
 <span id="cb6-190"><a href="#cb6-190" aria-hidden="true" tabindex="-1"></a>  item features are still computed on all of them;</span>
 <span id="cb6-191"><a href="#cb6-191" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>boosting rounds chosen by early stopping on the last 28 days *before* the origin, where</span>
 <span id="cb6-192"><a href="#cb6-192" aria-hidden="true" tabindex="-1"></a>  the original stops on the window it then reports;</span>
 <span id="cb6-193"><a href="#cb6-193" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>the event uplift implemented as intended rather than as coded;</span>
-<span id="cb6-194"><a href="#cb6-194" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>missing days defined by the price file.</span>
+<span id="cb6-194"><a href="#cb6-194" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>missing days are defined by the price file.</span>
 <span id="cb6-195"><a href="#cb6-195" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-196"><a href="#cb6-196" aria-hidden="true" tabindex="-1"></a>The second and third cost real accuracy, and I kept them anyway: a reproduction that scored</span>
-<span id="cb6-197"><a href="#cb6-197" aria-hidden="true" tabindex="-1"></a>*better* than the original would be the suspicious outcome.</span>
-<span id="cb6-198"><a href="#cb6-198" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-199"><a href="#cb6-199" aria-hidden="true" tabindex="-1"></a><span class="fu">## What it buys</span></span>
-<span id="cb6-200"><a href="#cb6-200" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-203"><a href="#cb6-203" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb6-204"><a href="#cb6-204" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: tbl-xgb</span></span>
-<span id="cb6-205"><a href="#cb6-205" aria-hidden="true" tabindex="-1"></a><span class="co">#| tbl-cap: "XGBoost against the baselines, both windows."</span></span>
-<span id="cb6-206"><a href="#cb6-206" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
-<span id="cb6-207"><a href="#cb6-207" aria-hidden="true" tabindex="-1"></a>models <span class="op">=</span> baselines <span class="op">+</span> [<span class="st">"xgboost_btrotta"</span>]</span>
-<span id="cb6-208"><a href="#cb6-208" aria-hidden="true" tabindex="-1"></a>md(rename_models(pl.concat([</span>
-<span id="cb6-209"><a href="#cb6-209" aria-hidden="true" tabindex="-1"></a>    table_of(models, role).with_columns(pl.lit(role).alias(<span class="st">"window"</span>))</span>
-<span id="cb6-210"><a href="#cb6-210" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> role <span class="kw">in</span> (<span class="st">"validation"</span>, <span class="st">"test"</span>)</span>
-<span id="cb6-211"><a href="#cb6-211" aria-hidden="true" tabindex="-1"></a>])).select([<span class="st">"window"</span>, <span class="st">"model"</span>, <span class="st">"n_series"</span>] <span class="op">+</span> metrics.METRICS).sort(<span class="st">"window"</span>, <span class="st">"WMAPE"</span>))</span>
-<span id="cb6-212"><a href="#cb6-212" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-213"><a href="#cb6-213" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-216"><a href="#cb6-216" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb6-217"><a href="#cb6-217" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-buckets</span></span>
-<span id="cb6-218"><a href="#cb6-218" aria-hidden="true" tabindex="-1"></a><span class="co">#| fig-cap: "Validation window, by horizon bucket. Baselines in grey. The gap to the 28-day mean opens only in the second fortnight."</span></span>
-<span id="cb6-219"><a href="#cb6-219" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
-<span id="cb6-220"><a href="#cb6-220" aria-hidden="true" tabindex="-1"></a>fig, axes <span class="op">=</span> plots.plot_by_bucket(table_of(models, <span class="st">"validation"</span>, by<span class="op">=</span><span class="st">"horizon_bucket"</span>),</span>
-<span id="cb6-221"><a href="#cb6-221" aria-hidden="true" tabindex="-1"></a>                                 metrics.METRICS)</span>
-<span id="cb6-222"><a href="#cb6-222" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
-<span id="cb6-223"><a href="#cb6-223" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-224"><a href="#cb6-224" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-225"><a href="#cb6-225" aria-hidden="true" tabindex="-1"></a>Fifty-two features, 28 trained models and roughly 84 minutes of CPU at the test origin,</span>
-<span id="cb6-226"><a href="#cb6-226" aria-hidden="true" tabindex="-1"></a>against a flat mean of the last 28 days: **0.8 WMAPE points on validation, 1.2 on test.**</span>
-<span id="cb6-227"><a href="#cb6-227" aria-hidden="true" tabindex="-1"></a>The horizon view says where that comes from — the two are nearly tied over the second</span>
-<span id="cb6-228"><a href="#cb6-228" aria-hidden="true" tabindex="-1"></a>week, then the mean decays while the model does not, which is the one thing a model</span>
-<span id="cb6-229"><a href="#cb6-229" aria-hidden="true" tabindex="-1"></a>with a calendar in it ought to manage. The first week is to the model's advantage too.</span>
-<span id="cb6-230"><a href="#cb6-230" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-231"><a href="#cb6-231" aria-hidden="true" tabindex="-1"></a>The per-series view is blunter still.</span>
-<span id="cb6-232"><a href="#cb6-232" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-235"><a href="#cb6-235" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb6-236"><a href="#cb6-236" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-index</span></span>
-<span id="cb6-237"><a href="#cb6-237" aria-hidden="true" tabindex="-1"></a><span class="co">#| fig-cap: "Per-series difference in WQL, XGBoost against the 28-day mean, series ordered by sales volume in the window."</span></span>
-<span id="cb6-238"><a href="#cb6-238" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
-<span id="cb6-239"><a href="#cb6-239" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> per_series_wql(model):</span>
-<span id="cb6-240"><a href="#cb6-240" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> metrics.score(scored(model, <span class="st">"validation"</span>), by<span class="op">=</span><span class="st">"id"</span>).select(</span>
-<span id="cb6-241"><a href="#cb6-241" aria-hidden="true" tabindex="-1"></a>        <span class="st">"id"</span>, pl.col(<span class="st">"WQL"</span>).alias(<span class="ss">f"WQL_</span><span class="sc">{</span>model<span class="sc">}</span><span class="ss">"</span>))</span>
-<span id="cb6-242"><a href="#cb6-242" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-243"><a href="#cb6-243" aria-hidden="true" tabindex="-1"></a>volume <span class="op">=</span> (scored(<span class="st">"xgboost_btrotta"</span>, <span class="st">"validation"</span>)</span>
-<span id="cb6-244"><a href="#cb6-244" aria-hidden="true" tabindex="-1"></a>          .group_by(<span class="st">"id"</span>).agg(pl.col(<span class="st">"y"</span>).<span class="bu">sum</span>().alias(<span class="st">"volume"</span>)))</span>
-<span id="cb6-245"><a href="#cb6-245" aria-hidden="true" tabindex="-1"></a>comparison <span class="op">=</span> (per_series_wql(<span class="st">"moving_average_28d"</span>)</span>
-<span id="cb6-246"><a href="#cb6-246" aria-hidden="true" tabindex="-1"></a>              .join(per_series_wql(<span class="st">"xgboost_btrotta"</span>), on<span class="op">=</span><span class="st">"id"</span>)</span>
-<span id="cb6-247"><a href="#cb6-247" aria-hidden="true" tabindex="-1"></a>              .join(volume, on<span class="op">=</span><span class="st">"id"</span>))</span>
-<span id="cb6-248"><a href="#cb6-248" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-249"><a href="#cb6-249" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">11</span>, <span class="fl">3.5</span>))</span>
-<span id="cb6-250"><a href="#cb6-250" aria-hidden="true" tabindex="-1"></a>share <span class="op">=</span> plots.index_plot(ax, comparison, <span class="st">"WQL"</span>,</span>
-<span id="cb6-251"><a href="#cb6-251" aria-hidden="true" tabindex="-1"></a>                         <span class="st">"moving_average_28d"</span>, <span class="st">"xgboost_btrotta"</span>, order_by<span class="op">=</span><span class="st">"volume"</span>)</span>
-<span id="cb6-252"><a href="#cb6-252" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
-<span id="cb6-253"><a href="#cb6-253" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-254"><a href="#cb6-254" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-255"><a href="#cb6-255" aria-hidden="true" tabindex="-1"></a>XGBoost has the lower WQL on <span class="in">`{python} f"{share:.0%}"`</span> of series. It loses on the majority</span>
-<span id="cb6-256"><a href="#cb6-256" aria-hidden="true" tabindex="-1"></a>of items and still wins overall, because the items it wins on are the ones that sell. Pooled</span>
-<span id="cb6-257"><a href="#cb6-257" aria-hidden="true" tabindex="-1"></a>metrics weight by volume; a per-series count does not. Both numbers are true, and quoting</span>
-<span id="cb6-258"><a href="#cb6-258" aria-hidden="true" tabindex="-1"></a>only the pooled one is exactly the kind of claim I built this harness to catch.</span>
+<span id="cb6-196"><a href="#cb6-196" aria-hidden="true" tabindex="-1"></a><span class="fu">## What it buys</span></span>
+<span id="cb6-197"><a href="#cb6-197" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-200"><a href="#cb6-200" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb6-201"><a href="#cb6-201" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: tbl-xgb</span></span>
+<span id="cb6-202"><a href="#cb6-202" aria-hidden="true" tabindex="-1"></a><span class="co">#| tbl-cap: "XGBoost against the baselines, both windows."</span></span>
+<span id="cb6-203"><a href="#cb6-203" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
+<span id="cb6-204"><a href="#cb6-204" aria-hidden="true" tabindex="-1"></a>models <span class="op">=</span> baselines <span class="op">+</span> [<span class="st">"xgboost_btrotta"</span>]</span>
+<span id="cb6-205"><a href="#cb6-205" aria-hidden="true" tabindex="-1"></a>md(rename_models(pl.concat([</span>
+<span id="cb6-206"><a href="#cb6-206" aria-hidden="true" tabindex="-1"></a>    table_of(models, role).with_columns(pl.lit(role).alias(<span class="st">"window"</span>))</span>
+<span id="cb6-207"><a href="#cb6-207" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> role <span class="kw">in</span> (<span class="st">"validation"</span>, <span class="st">"test"</span>)</span>
+<span id="cb6-208"><a href="#cb6-208" aria-hidden="true" tabindex="-1"></a>])).select([<span class="st">"window"</span>, <span class="st">"model"</span>, <span class="st">"n_series"</span>] <span class="op">+</span> metrics.METRICS).sort(<span class="st">"window"</span>, <span class="st">"WMAPE"</span>))</span>
+<span id="cb6-209"><a href="#cb6-209" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-210"><a href="#cb6-210" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-213"><a href="#cb6-213" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb6-214"><a href="#cb6-214" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-buckets</span></span>
+<span id="cb6-215"><a href="#cb6-215" aria-hidden="true" tabindex="-1"></a><span class="co">#| fig-cap: "Validation window, by horizon bucket. Baselines in grey. The gap to the 28-day mean opens except in the second bucket."</span></span>
+<span id="cb6-216"><a href="#cb6-216" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
+<span id="cb6-217"><a href="#cb6-217" aria-hidden="true" tabindex="-1"></a>fig, axes <span class="op">=</span> plots.plot_by_bucket(table_of(models, <span class="st">"validation"</span>, by<span class="op">=</span><span class="st">"horizon_bucket"</span>),</span>
+<span id="cb6-218"><a href="#cb6-218" aria-hidden="true" tabindex="-1"></a>                                 metrics.METRICS)</span>
+<span id="cb6-219"><a href="#cb6-219" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
+<span id="cb6-220"><a href="#cb6-220" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-221"><a href="#cb6-221" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-222"><a href="#cb6-222" aria-hidden="true" tabindex="-1"></a>With the 52 features, we get **0.8 WMAPE points on validation, 1.2 on test.**</span>
+<span id="cb6-223"><a href="#cb6-223" aria-hidden="true" tabindex="-1"></a>The horizon view says where that comes from — the two are nearly tied over the second</span>
+<span id="cb6-224"><a href="#cb6-224" aria-hidden="true" tabindex="-1"></a>week, then the mean decays while the model does not, which is the one thing a model</span>
+<span id="cb6-225"><a href="#cb6-225" aria-hidden="true" tabindex="-1"></a>with a calendar in it ought to manage. The first week is to the model's advantage too: it </span>
+<span id="cb6-226"><a href="#cb6-226" aria-hidden="true" tabindex="-1"></a>is where it should be strongest after all.</span>
+<span id="cb6-227"><a href="#cb6-227" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-228"><a href="#cb6-228" aria-hidden="true" tabindex="-1"></a>The per-series view is blunter.</span>
+<span id="cb6-229"><a href="#cb6-229" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-232"><a href="#cb6-232" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb6-233"><a href="#cb6-233" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-index</span></span>
+<span id="cb6-234"><a href="#cb6-234" aria-hidden="true" tabindex="-1"></a><span class="co">#| fig-cap: "Per-series difference in WQL, XGBoost against the 28-day mean, series ordered by sales volume in the window."</span></span>
+<span id="cb6-235"><a href="#cb6-235" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
+<span id="cb6-236"><a href="#cb6-236" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> per_series_wql(model):</span>
+<span id="cb6-237"><a href="#cb6-237" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> metrics.score(scored(model, <span class="st">"validation"</span>), by<span class="op">=</span><span class="st">"id"</span>).select(</span>
+<span id="cb6-238"><a href="#cb6-238" aria-hidden="true" tabindex="-1"></a>        <span class="st">"id"</span>, pl.col(<span class="st">"WQL"</span>).alias(<span class="ss">f"WQL_</span><span class="sc">{</span>model<span class="sc">}</span><span class="ss">"</span>))</span>
+<span id="cb6-239"><a href="#cb6-239" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-240"><a href="#cb6-240" aria-hidden="true" tabindex="-1"></a>volume <span class="op">=</span> (scored(<span class="st">"xgboost_btrotta"</span>, <span class="st">"validation"</span>)</span>
+<span id="cb6-241"><a href="#cb6-241" aria-hidden="true" tabindex="-1"></a>          .group_by(<span class="st">"id"</span>).agg(pl.col(<span class="st">"y"</span>).<span class="bu">sum</span>().alias(<span class="st">"volume"</span>)))</span>
+<span id="cb6-242"><a href="#cb6-242" aria-hidden="true" tabindex="-1"></a>comparison <span class="op">=</span> (per_series_wql(<span class="st">"moving_average_28d"</span>)</span>
+<span id="cb6-243"><a href="#cb6-243" aria-hidden="true" tabindex="-1"></a>              .join(per_series_wql(<span class="st">"xgboost_btrotta"</span>), on<span class="op">=</span><span class="st">"id"</span>)</span>
+<span id="cb6-244"><a href="#cb6-244" aria-hidden="true" tabindex="-1"></a>              .join(volume, on<span class="op">=</span><span class="st">"id"</span>))</span>
+<span id="cb6-245"><a href="#cb6-245" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-246"><a href="#cb6-246" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">11</span>, <span class="fl">3.5</span>))</span>
+<span id="cb6-247"><a href="#cb6-247" aria-hidden="true" tabindex="-1"></a>share <span class="op">=</span> plots.index_plot(ax, comparison, <span class="st">"WQL"</span>,</span>
+<span id="cb6-248"><a href="#cb6-248" aria-hidden="true" tabindex="-1"></a>                         <span class="st">"moving_average_28d"</span>, <span class="st">"xgboost_btrotta"</span>, order_by<span class="op">=</span><span class="st">"volume"</span>)</span>
+<span id="cb6-249"><a href="#cb6-249" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
+<span id="cb6-250"><a href="#cb6-250" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-251"><a href="#cb6-251" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-252"><a href="#cb6-252" aria-hidden="true" tabindex="-1"></a>XGBoost has the lower WQL (*ie* WMAPE) on <span class="in">`{python} f"{share:.0%}"`</span> of series. It loses on the majority</span>
+<span id="cb6-253"><a href="#cb6-253" aria-hidden="true" tabindex="-1"></a>of items and still wins overall, because the items it wins on are the ones that sell. Therefore, </span>
+<span id="cb6-254"><a href="#cb6-254" aria-hidden="true" tabindex="-1"></a>it reacts better to changes. The core difficulty of the dataset really is how low the values are.</span>
+<span id="cb6-255"><a href="#cb6-255" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-256"><a href="#cb6-256" aria-hidden="true" tabindex="-1"></a><span class="fu">## What the baseline settles</span></span>
+<span id="cb6-257"><a href="#cb6-257" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-258"><a href="#cb6-258" aria-hidden="true" tabindex="-1"></a>Three things carry into the next post.</span>
 <span id="cb6-259"><a href="#cb6-259" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-260"><a href="#cb6-260" aria-hidden="true" tabindex="-1"></a><span class="fu">## What the baseline settles</span></span>
-<span id="cb6-261"><a href="#cb6-261" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-262"><a href="#cb6-262" aria-hidden="true" tabindex="-1"></a>Three things carry into the next post.</span>
-<span id="cb6-263"><a href="#cb6-263" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-264"><a href="#cb6-264" aria-hidden="true" tabindex="-1"></a>**A number to beat.** WMAPE 78.8 on validation, 76.4 on test — and the honest framing is</span>
-<span id="cb6-265"><a href="#cb6-265" aria-hidden="true" tabindex="-1"></a>that most of that was already available from a 28-day mean.</span>
+<span id="cb6-260"><a href="#cb6-260" aria-hidden="true" tabindex="-1"></a>**The dataset's difficulty.** As we showed, this prediction problem is made much harder by the low </span>
+<span id="cb6-261"><a href="#cb6-261" aria-hidden="true" tabindex="-1"></a>volume of the series (which are integer values, so it isn't just a matter of scaling).</span>
+<span id="cb6-262"><a href="#cb6-262" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-263"><a href="#cb6-263" aria-hidden="true" tabindex="-1"></a>**A number to beat.** WMAPE 78.8 on validation, 76.4 on test (first bucket, but others will matter of </span>
+<span id="cb6-264"><a href="#cb6-264" aria-hidden="true" tabindex="-1"></a>course) — and the honest framing is</span>
+<span id="cb6-265"><a href="#cb6-265" aria-hidden="true" tabindex="-1"></a>that most of that was already available from a 28-day mean, despite how rough of an estimate it is.</span>
 <span id="cb6-266"><a href="#cb6-266" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-267"><a href="#cb6-267" aria-hidden="true" tabindex="-1"></a>**An axis on which to beat it.** XGBoost returns a point forecast, so the comparison is MAE,</span>
-<span id="cb6-268"><a href="#cb6-268" aria-hidden="true" tabindex="-1"></a>WMAPE and P90. Its WQL is arithmetic, not a measurement.</span>
-<span id="cb6-269"><a href="#cb6-269" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-270"><a href="#cb6-270" aria-hidden="true" tabindex="-1"></a>**A caveat that cuts the other way.** XGBoost is trained on squared error, so it estimates a</span>
-<span id="cb6-271"><a href="#cb6-271" aria-hidden="true" tabindex="-1"></a>conditional mean. On absolute-error metrics the optimal point forecast is the *median*, so</span>
-<span id="cb6-272"><a href="#cb6-272" aria-hidden="true" tabindex="-1"></a>any model that returns a median starts with a structural advantage on MAE and WMAPE that has</span>
-<span id="cb6-273"><a href="#cb6-273" aria-hidden="true" tabindex="-1"></a>nothing to do with forecasting better. Chronos-2 returns a median, so in case of a tight</span>
-<span id="cb6-274"><a href="#cb6-274" aria-hidden="true" tabindex="-1"></a>match strong conclusions could be risky.</span>
+<span id="cb6-267"><a href="#cb6-267" aria-hidden="true" tabindex="-1"></a>**A caveat.** XGBoost is trained on squared error, so it estimates a</span>
+<span id="cb6-268"><a href="#cb6-268" aria-hidden="true" tabindex="-1"></a>conditional mean. On absolute-error metrics the optimal point forecast is the *median*, so</span>
+<span id="cb6-269"><a href="#cb6-269" aria-hidden="true" tabindex="-1"></a>any model that returns a median starts with a structural advantage on MAE and WMAPE that has</span>
+<span id="cb6-270"><a href="#cb6-270" aria-hidden="true" tabindex="-1"></a>nothing to do with forecasting better. However, Chronos-2 returns a median. Moreover, because </span>
+<span id="cb6-271"><a href="#cb6-271" aria-hidden="true" tabindex="-1"></a>it is distributional, Chronos-2 has a slight edge. When looking at WQL, without regards to </span>
+<span id="cb6-272"><a href="#cb6-272" aria-hidden="true" tabindex="-1"></a>if the derived point forecast is actually better. So in case of a tight</span>
+<span id="cb6-273"><a href="#cb6-273" aria-hidden="true" tabindex="-1"></a>match, strong conclusions could be risky.</span>
 </code></pre></div><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></div>
 </div></div></div></div></div>
 </div> <!-- /content -->

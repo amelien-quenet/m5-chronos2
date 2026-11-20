@@ -178,7 +178,7 @@ window.Quarto = {
   <div class="quarto-title-banner page-columns page-full">
     <div class="quarto-title column-page-left">
       <h1 class="title">Investigating Chronos-2</h1>
-            <p class="subtitle lead">What a time-series foundation model does, and does not, buy you on a hard retail panel</p>
+            <p class="subtitle lead">How does a pre-trained time-series foundation model perform on a hard task?</p>
                       </div>
   </div>
     
@@ -200,8 +200,8 @@ window.Quarto = {
    
   <ul>
   <li><a href="#the-question" id="toc-the-question" class="nav-link active" data-scroll-target="#the-question">The question</a></li>
-  <li><a href="#what-the-three-parts-do" id="toc-what-the-three-parts-do" class="nav-link" data-scroll-target="#what-the-three-parts-do">What the three parts do</a></li>
-  <li><a href="#how-to-read-the-numbers" id="toc-how-to-read-the-numbers" class="nav-link" data-scroll-target="#how-to-read-the-numbers">How to read the numbers</a></li>
+  <li><a href="#an-analysis-in-three-parts" id="toc-an-analysis-in-three-parts" class="nav-link" data-scroll-target="#an-analysis-in-three-parts">An analysis in three parts</a></li>
+  <li><a href="#underlying-rules-for-the-numbers" id="toc-underlying-rules-for-the-numbers" class="nav-link" data-scroll-target="#underlying-rules-for-the-numbers">Underlying rules for the numbers</a></li>
   </ul>
 </nav>
     </div>
@@ -214,21 +214,22 @@ window.Quarto = {
 
 <section id="the-question" class="level2">
 <h2 class="anchored" data-anchor-id="the-question">The question</h2>
-<p>Foundation models for time series are sold as a replacement for the feature engineering that gradient-boosted trees need: no lags to design, no calendar to encode, no per-series training. This series tests that claim on data where it is hard to be right — the <a href="https://www.kaggle.com/competitions/m5-forecasting-accuracy">M5 Forecasting — Accuracy</a> panel, 30,490 item×store series of daily Walmart sales, 68% of days zero, a median series selling 0.45 units a day, forecast 28 days ahead.</p>
-<p>M5 was chosen for two specific reasons rather than its fame. Chronos-2 has <strong>no training leakage</strong> on it, so a zero-shot number means something. And its dynamics are mostly <strong>endogenous</strong>: on fev-bench the multivariate model beats its univariate sibling by a hair (WQL 0.555 vs 0.559), which says the cross-series machinery has little to feed on here. That makes it a clean test of the model itself rather than of the covariates one can invent around it.</p>
+<p>Foundation models for time series are sold as a replacement for the feature engineering that gradient-boosted trees need: no lags to design, no calendar to encode, no per-series training, etc. This series tests that claim and the intuition that a model designed to tackle any time-series without further specification will be weaker when faced with a very unique problem.</p>
+<p>This “hard” time-series problem is the <a href="https://www.kaggle.com/competitions/m5-forecasting-accuracy">M5 Forecasting — Accuracy</a> panel, composed of item×store series of daily Walmart sales.</p>
+<p>M5 was chosen for two specific reasons beyond its fame - which makes comparisons all the more relevant. Chronos-2 has <strong>no training leakage</strong> on it, so we can consider zero-shot predictions. And its dynamics are mostly <strong>endogenous</strong>: on fev-bench the multivariate model beats its univariate sibling by a hair (WQL 0.555 vs 0.559), which implies a cross-series machinery has little to feed on here (which Chronos2 can be equipped with). That makes it a clean test of the model itself rather than of unfair competition over covariates one can invent around it.</p>
 </section>
-<section id="what-the-three-parts-do" class="level2">
-<h2 class="anchored" data-anchor-id="what-the-three-parts-do">What the three parts do</h2>
-<p>The order matters: each part exists because the previous one left a question open. The third one ends without a verdict, and that is reported rather than smoothed over — the test it runs disqualifies its own key instrument, which is more useful to know than a tidy conclusion would have been.</p>
+<section id="an-analysis-in-three-parts" class="level2">
+<h2 class="anchored" data-anchor-id="an-analysis-in-three-parts">An analysis in three parts</h2>
+<p>The order matters, as it is a linear progression through experiments, observations, and interpretations.</p>
 <div id="listing-series" class="quarto-listing quarto-listing-container-default">
 <div class="list quarto-listing-default">
-<div class="quarto-post image-right" data-index="0" data-categories="TTUlMkNYR0Jvb3N0JTJDZXZhbHVhdGlvbg==" data-listing-date-sort="1793487600000" data-listing-file-modified-sort="1794922032316" data-listing-date-modified-sort="NaN" data-listing-reading-time-sort="10" data-listing-word-count-sort="1861">
+<div class="quarto-post image-right" data-index="0" data-categories="TTUlMkNYR0Jvb3N0JTJDZXZhbHVhdGlvbg==" data-listing-date-sort="1793487600000" data-listing-file-modified-sort="1795115240996" data-listing-date-modified-sort="NaN" data-listing-reading-time-sort="10" data-listing-word-count-sort="1906">
 <div class="body">
 <h3 class="no-anchor listing-title">
-<a href="./posts/01-xgboost/index.html" class="no-external">A baseline that earns its place</a>
+<a href="./posts/01-xgboost/index.html" class="no-external">The baseline: XGBoost</a>
 </h3>
 <div class="delink listing-description"><a href="./posts/01-xgboost/index.html" class="no-external">
-<p>Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness every later claim rests on. Fifty-two engineered features beat a 28-day mean by less than one point.</p>
+<p>Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness. Surprisingly, fifty-two engineered features beat a 28-day mean by less than one point.</p>
 </a></div>
 </div>
 <div class="metadata">
@@ -240,13 +241,13 @@ Nov 1, 2026
 </a>
 </div>
 </div>
-<div class="quarto-post image-right" data-index="1" data-categories="TTUlMkNDaHJvbm9zLTIlMkNmb3VuZGF0aW9uJTIwbW9kZWxzJTJDZmluZS10dW5pbmc=" data-listing-date-sort="1793487600000" data-listing-file-modified-sort="1794922032323" data-listing-date-modified-sort="NaN" data-listing-reading-time-sort="24" data-listing-word-count-sort="4642">
+<div class="quarto-post image-right" data-index="1" data-categories="TTUlMkNDaHJvbm9zLTIlMkNmb3VuZGF0aW9uJTIwbW9kZWxzJTJDZmluZS10dW5pbmc=" data-listing-date-sort="1793487600000" data-listing-file-modified-sort="1794998509926" data-listing-date-modified-sort="NaN" data-listing-reading-time-sort="24" data-listing-word-count-sort="4642">
 <div class="body">
 <h3 class="no-anchor listing-title">
 <a href="./posts/02-chronos2/index.html" class="no-external">Chronos-2, knob by knob</a>
 </h3>
 <div class="delink listing-description"><a href="./posts/02-chronos2/index.html" class="no-external">
-<p>Zero-shot, the model beats a 52-feature baseline by 8% out of the box. Then four reasonable ideas make it worse, a 46-length context sweep buys 0.1%, and a LoRA fine-tune is a wash.</p>
+<p>The zero-shot predictions beat the baseline by 8% out of the box. Then any customization struggles to improve predictions.</p>
 </a></div>
 </div>
 <div class="metadata">
@@ -258,13 +259,13 @@ Nov 1, 2026
 </a>
 </div>
 </div>
-<div class="quarto-post image-right" data-index="2" data-categories="TTUlMkNkaWFnbm9zdGljcyUyQ2NsdXN0ZXJpbmclMkNzdGF0aXN0aWNz" data-listing-date-sort="1794006000000" data-listing-file-modified-sort="1794922032333" data-listing-date-modified-sort="NaN" data-listing-reading-time-sort="26" data-listing-word-count-sort="5036">
+<div class="quarto-post image-right" data-index="2" data-categories="TTUlMkNkaWFnbm9zdGljcyUyQ2NsdXN0ZXJpbmclMkNzdGF0aXN0aWNz" data-listing-date-sort="1794006000000" data-listing-file-modified-sort="1794998710779" data-listing-date-modified-sort="NaN" data-listing-reading-time-sort="26" data-listing-word-count-sort="5036">
 <div class="body">
 <h3 class="no-anchor listing-title">
-<a href="./posts/03-ceiling/index.html" class="no-external">Difficulty belongs to the item, and mostly to its volume</a>
+<a href="./posts/03-ceiling/index.html" class="no-external">Have we reached a ceiling?</a>
 </h3>
 <div class="delink listing-description"><a href="./posts/03-ceiling/index.html" class="no-external">
-<p>Forty-two per cent of the error sits on the identity of the item and two per cent on the week. Two thirds of that is volume. The third that is left is real, and it is not in the weekly shape — which rules out the one axis I had built the machinery to test.</p>
+<p>A comprehensive tracking of the error’s origin, plus a qualitative check of the underlying structure of the data.</p>
 </a></div>
 </div>
 <div class="metadata">
@@ -280,9 +281,9 @@ Nov 7, 2026
 <div class="listing-no-matching d-none">No matching items</div>
 </div>
 </section>
-<section id="how-to-read-the-numbers" class="level2">
-<h2 class="anchored" data-anchor-id="how-to-read-the-numbers">How to read the numbers</h2>
-<p>Three commitments, kept throughout, because they are what separates a benchmark from a demonstration:</p>
+<section id="underlying-rules-for-the-numbers" class="level2">
+<h2 class="anchored" data-anchor-id="underlying-rules-for-the-numbers">Underlying rules for the numbers</h2>
+<p>Three commitments, kept throughout:</p>
 <ul>
 <li><strong>Every choice is made on a validation origin</strong> (2016-03-27) and measured once on a test origin (2016-04-24). Nothing is selected on the window it is scored on.</li>
 <li><strong>The evaluation roster is frozen</strong> before any model runs, and every metric is reported next to the number of series it was computed on.</li>
