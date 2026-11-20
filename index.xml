@@ -2571,8 +2571,8 @@ Table&nbsp;3: The clustering audit of the weekly shape space.
 
 
 
-<p>Testing our foundation model only makes sense when put against something. So I began by building the reference it would have to beat: a feature-engineered gradient-boosting model, in the tradition that won M5, inspired by a public top-4% solution.</p>
-<p>The result worth stating up front is how little the feature engineering buys over the “mean of the last 28 days” elementary model. That is not a criticism of the solution reproduced — I reduced it to a single XGBoost model where the original used LightGBM — but it makes the comparison in <a href="../02-chronos2/">the next post</a> all the more interesting.</p>
+<p>Testing our foundation model only makes sense when putting it against something else. So I began by building the reference it would have to beat: a feature-engineered gradient-boosting model, in the tradition that won M5, inspired by a public top-4% solution.</p>
+<p>The result worth stating up front is how little the feature engineering buys over the “mean of the last 28 days” elementary model. That is not a criticism of the solution reproduced — I reduced it to a single XGBoost model where the original used LightGBM - but by seeing this fully engineered XGBoost version as a canonical representative of traditional machine learning techniques, it makes the comparison in <a href="../02-chronos2/">the next post</a> all the more interesting.</p>
 <section id="the-dataset" class="level2">
 <h2 class="anchored" data-anchor-id="the-dataset">The dataset</h2>
 <p>One target value per series per day: units of one item sold in one Walmart store. History runs 2011-01-29 to 2016-05-22, 1,941 days, 30,490 series. <strong>The task is to predict 28 days ahead.</strong></p>
@@ -2726,7 +2726,7 @@ Figure&nbsp;1: Left: share of on-sale days with no sale, one count per series. R
 </div>
 <p>The median sells of the averaged series is <strong>0.55 units a day</strong>, and the median share of days a series is on the shelf but isn’t sold is <strong>66%</strong>. Figure 1 proves that this median is fairly representative, so we are dealing with <strong>mostly near zero series</strong>. Two consequences run through everything that follows.</p>
 <p>First, <strong>a zero is information, not a gap.</strong> There is only one exception: the days before an item’s first price in <code>sell_prices.csv</code>, when it was not on the shelf at all. Those are dropped from every history (I tracked this effect by only keeping values from where a price tag has been attributed to an item). Everything else is a real zero — <strong>the item was available and nobody bought it</strong> — and it is part of what the forecast has to get right.</p>
-<p>Second, the evaluation metric over a period of zero sales cannot be a percentage error. Dividing by an actual of zero is undefined, and most actuals are zero.</p>
+<p>Second, periods of zero sales are common, so if our evaluation metric is a percentage error, we need to filter the series. This could reduce further our sample size.</p>
 </section>
 <section id="the-harness-comes-first" class="level2">
 <h2 class="anchored" data-anchor-id="the-harness-comes-first">The harness comes first</h2>
@@ -2768,7 +2768,12 @@ Table&nbsp;1: The two windows. Every choice I make is made on the validation win
 </figure>
 </div>
 </div>
-<p>A (series, window) pair is scored only if it clears three conditions: 1. at least 56 days (arbitrary, but reasonable) on sale before the origin 2. no missing day inside the window 3. at least one unit sold in the window.</p>
+<p>A (series, window) pair is scored only if it clears three conditions:</p>
+<ol type="1">
+<li>at least 56 days (arbitrary, but reasonable) on sale before the origin</li>
+<li>no missing day inside the window</li>
+<li>at least one unit sold in the window.</li>
+</ol>
 <p>The third is necessary — WMAPE and WQL divide by the window’s total, so a series that sells nothing has no defined error (cf.&nbsp;paragraph above).</p>
 <p>The surviving list is frozen to disk. A roster that quietly changes between models turns every later comparison into a comparison of populations, which would be undesirable.</p>
 <p>Of the 500 sampled series, <strong>473 are scorable</strong> on the validation window and <strong>485 on the test window</strong>. It so happens that every exclusion is the no-sale condition.</p>
@@ -2815,7 +2820,7 @@ Table&nbsp;1: The two windows. Every choice I make is made on the validation win
 </tr>
 </tbody>
 </table>
-<p><img src="https://latex.codecogs.com/png.latex?L_q"> is the quantile loss on a forecast <img src="https://latex.codecogs.com/png.latex?f">: <img src="https://latex.codecogs.com/png.latex?q%5C,(y%20-%20f)"> when <img src="https://latex.codecogs.com/png.latex?f%20%5Cleqslant%20y">, <img src="https://latex.codecogs.com/png.latex?(1-q)(f%20-%20y)"> when <img src="https://latex.codecogs.com/png.latex?f%20%5Cgeqslant%20y">. WQL applies it to each quantile forecast <img src="https://latex.codecogs.com/png.latex?y_%7Bpred,q%7D"> in turn, and is a staple scoring rule. <strong>For distributional models, <img src="https://latex.codecogs.com/png.latex?y_%7Bpred,q%7D"> refers to the median value.</strong> RQL applies <img src="https://latex.codecogs.com/png.latex?L_%7B0.2%7D"> to the point forecast <img src="https://latex.codecogs.com/png.latex?y_%7Bpred%7D"> instead, because the asymmetry is meant to price the cost of acting on the number the model puts forward. Scoring it on the 0.2 quantile column would reward a model for submitting a deliberately low number: over-predicting costs 4 times more than under-predicting. This signal matters in practice as retailers want to know whether following the predictions means taking risks. If not mentioned, all sums run over scored (series, day) pairs, never averaged per series and then averaged again.</p>
+<p><img src="https://latex.codecogs.com/png.latex?L_q"> is the quantile loss on a forecast <img src="https://latex.codecogs.com/png.latex?f">: <img src="https://latex.codecogs.com/png.latex?q%5C,(y%20-%20f)"> when <img src="https://latex.codecogs.com/png.latex?f%20%5Cleqslant%20y">, <img src="https://latex.codecogs.com/png.latex?(1-q)(f%20-%20y)"> when <img src="https://latex.codecogs.com/png.latex?f%20%5Cgeqslant%20y">. WQL applies it to each quantile forecast <img src="https://latex.codecogs.com/png.latex?y_%7Bpred,q%7D"> in turn, and is a staple scoring rule. <strong>For distributional models, <img src="https://latex.codecogs.com/png.latex?y_%7Bpred,q%7D"> refers to the median value.</strong> RQL applies <img src="https://latex.codecogs.com/png.latex?L_%7B0.2%7D"> to the point forecast <img src="https://latex.codecogs.com/png.latex?y_%7Bpred%7D"> instead, because the asymmetry is meant to price the cost of acting on the number the model puts forward. Scoring it on the 0.2 quantile column would reward a model for submitting a deliberately low number: over-predicting costs 4 times more than under-predicting. This signal matters in practice as retailers want to know whether following the predictions means risking over production (more costly then under production). If not mentioned, all sums run over scored (series, day) pairs, never averaged per series and then averaged again.</p>
 <p>One remark for <a href="../02-chronos2/">the next post</a>: <strong>for a model that only gives a point forecast, every quantile column is a copy of it, and WQL collapses to WMAPE/100.</strong> A probabilistic model can beat that number only by saying something true about its own uncertainty. So WQL is not a fair axis for comparing a point model with a distributional one; MAE, WMAPE, P90 and RQL are. However <strong>WQL will be our main decider for a batch of distributional models.</strong></p>
 </section>
 </section>
@@ -2917,7 +2922,7 @@ Table&nbsp;2: Validation window. Lower is better everywhere.
 <p>I strayed from the original in five places, deliberately:</p>
 <ul>
 <li>XGBoost instead of LightGBM, with the closest equivalent settings (easier to run, and the core principle);</li>
-<li><strong>training on the 500-series sample</strong> rather than all 30,490 — though the department and item features are still computed on all of them;</li>
+<li>training on the 500-series sample rather than all 30,490 — though the department and item features are still computed on all of them;</li>
 <li>boosting rounds chosen by early stopping on the last 28 days <em>before</em> the origin, where the original stops on the window it then reports;</li>
 <li>the event uplift implemented as intended rather than as coded;</li>
 <li>missing days are defined by the price file.</li>
@@ -3110,9 +3115,9 @@ Figure&nbsp;2: Validation window, by horizon bucket. Baselines in grey. The gap 
 </div>
 </div>
 </div>
-<p>With the 52 features, we get <strong>0.8 WMAPE points on validation, 1.2 on test.</strong> The horizon view says where that comes from — the two are nearly tied over the second week, then the mean decays while the model does not, which is the one thing a model with a calendar in it ought to manage. The first week is to the model’s advantage too: it is where it should be strongest after all.</p>
+<p>With the 52 features, we get <strong>0.8 WMAPE points on validation, 1.2 on test.</strong> In relative terms that is a cut of 1.0% in WMAPE on validation and 1.6% on test — the same percentages for MAE, which cannot differ, since both metrics divide the same sum of absolute errors by a denominator no model can move — and set against the fifth of the error the 28-day mean had already removed on its own, the fifty-two features add only 4% of that ground on validation and 5% on test. The horizon view says where that comes from — the two are nearly tied over the second week, then the mean decays while the model does not, which is the one thing a model with a calendar in it ought to manage. The first week is to the model’s advantage too: it is where it should be strongest after all.</p>
 <p>The per-series view is blunter.</p>
-<div id="cell-fig-index" class="cell" data-execution_count="8">
+<div id="cell-fig-index" class="cell" data-execution_count="9">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5" style="background: #f1f3f5;"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><span class="kw" style="color: #003B4F;
@@ -3221,7 +3226,7 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 <h2 class="anchored" data-anchor-id="what-the-baseline-settles">What the baseline settles</h2>
 <p>Three things carry into the next post.</p>
 <p><strong>The dataset’s difficulty.</strong> As we showed, this prediction problem is made much harder by the low volume of the series (which are integer values, so it isn’t just a matter of scaling).</p>
-<p><strong>A number to beat.</strong> WMAPE 78.8 on validation, 76.4 on test (first bucket, but others will matter of course) — and the honest framing is that most of that was already available from a 28-day mean, despite how rough of an estimate it is.</p>
+<p><strong>A number to beat.</strong> WMAPE 78.8 on validation, 76.4 on test (first bucket, and the others matter as much) — and the honest framing is that most of that was already available from a 28-day mean, despite how rough of an estimate it is.</p>
 <p><strong>A caveat.</strong> XGBoost is trained on squared error, so it estimates a conditional mean. On absolute-error metrics the optimal point forecast is the <em>median</em>, so any model that returns a median starts with a structural advantage on MAE and WMAPE that has nothing to do with forecasting better. However, Chronos-2 returns a median. Moreover, because it is distributional, Chronos-2 has a slight edge. When looking at WQL, without regards to if the derived point forecast is actually better. So in case of a tight match, strong conclusions could be risky.</p>
 
 
@@ -5249,7 +5254,7 @@ font-style: inherit;">1</span>))</span>
 <div id="fig-final-examples" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
 <div aria-describedby="fig-final-examples-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<img src="https://amelien-quenet.fr/m5-chronos2/posts/02-chronos2/index_files/figure-html/fig-final-examples-output-1.png" width="1204" height="1089" class="figure-img">
+<img src="https://amelien-quenet.fr/m5-chronos2/posts/02-chronos2/index_files/figure-html/fig-final-examples-output-1.png" width="1209" height="1089" class="figure-img">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-final-examples-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 Figure&nbsp;8: Four test-window series at the 98th, 75th, 50th and 25th percentile of volume. Bands: the final model’s quantiles. Dots: what sold.
