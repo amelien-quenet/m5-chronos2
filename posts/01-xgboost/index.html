@@ -476,10 +476,18 @@ Table&nbsp;2: Validation window. Lower is better everywhere.
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>models <span class="op">=</span> baselines <span class="op">+</span> [<span class="st">"xgboost_btrotta"</span>]</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>md(rename_models(pl.concat([</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>XGB_TABLE <span class="op">=</span> pl.concat([</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    table_of(models, role).with_columns(pl.lit(role).alias(<span class="st">"window"</span>))</span>
 <span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> role <span class="kw">in</span> (<span class="st">"validation"</span>, <span class="st">"test"</span>)</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>])).select([<span class="st">"window"</span>, <span class="st">"model"</span>, <span class="st">"n_series"</span>] <span class="op">+</span> metrics.METRICS).sort(<span class="st">"window"</span>, <span class="st">"WMAPE"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>])</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> wmape(model, window):</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""One WMAPE cell of this table, so the prose below cannot drift away from it."""</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> XGB_TABLE.<span class="bu">filter</span>(pl.col(<span class="st">"model"</span>) <span class="op">==</span> model,</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>                            pl.col(<span class="st">"window"</span>) <span class="op">==</span> window)[<span class="st">"WMAPE"</span>].item()</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>md(rename_models(XGB_TABLE)</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>   .select([<span class="st">"window"</span>, <span class="st">"model"</span>, <span class="st">"n_series"</span>] <span class="op">+</span> metrics.METRICS).sort(<span class="st">"window"</span>, <span class="st">"WMAPE"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 <div id="tbl-xgb" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-execution_count="6">
 <figure class="quarto-float quarto-float-tbl figure">
@@ -619,7 +627,7 @@ Figure&nbsp;2: Validation window, by horizon bucket. Baselines in grey. The gap 
 </div>
 </div>
 </div>
-<p>With the 52 features, we get <strong>0.8 WMAPE points on validation, 1.2 on test.</strong> In relative terms that is a cut of 1.0% in WMAPE on validation and 1.6% on test — the same percentages for MAE, which cannot differ, since both metrics divide the same sum of absolute errors by a denominator no model can move — and set against the fifth of the error the 28-day mean had already removed on its own, the fifty-two features add only 4% of that ground on validation and 5% on test. The horizon view says where that comes from — the two are nearly tied over the second week, then the mean decays while the model does not, which is the one thing a model with a calendar in it ought to manage. The first week is to the model’s advantage too: it is where it should be strongest after all.</p>
+<p>With the 52 features, we get <strong>0.8 WMAPE points on validation, 1.2 on test.</strong> In relative terms that is a cut of 1.0% in WMAPE on validation and 1.6% on test — the same percentages for MAE, which cannot differ — and set against the fifth of the error the 28-day mean had already removed on its own, the fifty-two features add only 4% of that ground on validation and 5% on test. The horizon view says where that comes from — for all metrics except P90, the two are nearly tied after the first week. So the first week is especially to the model’s advantage: it is where it should indeed be at its strongest.</p>
 <p>The per-series view is blunter.</p>
 <div id="cell-fig-index" class="cell" data-execution_count="9">
 <details class="code-fold">
@@ -658,7 +666,7 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 <h2 class="anchored" data-anchor-id="what-the-baseline-settles">What the baseline settles</h2>
 <p>Three things carry into the next post.</p>
 <p><strong>The dataset’s difficulty.</strong> As we showed, this prediction problem is made much harder by the low volume of the series (which are integer values, so it isn’t just a matter of scaling).</p>
-<p><strong>A number to beat.</strong> WMAPE 78.8 on validation, 76.4 on test (first bucket, and the others matter as much) — and the honest framing is that most of that was already available from a 28-day mean, despite how rough of an estimate it is.</p>
+<p><strong>A number to beat.</strong> WMAPE 78.8 on validation, 76.4 on test (pooled over the whole forecast horizon) — and the honest framing is that most of that was already available from a 28-day mean (79.6 and 77.6), despite how rough of an estimate it is.</p>
 <p><strong>A caveat.</strong> XGBoost is trained on squared error, so it estimates a conditional mean. On absolute-error metrics the optimal point forecast is the <em>median</em>, so any model that returns a median starts with a structural advantage on MAE and WMAPE that has nothing to do with forecasting better. However, Chronos-2 returns a median. Moreover, because it is distributional, Chronos-2 has a slight edge. When looking at WQL, without regards to if the derived point forecast is actually better. So in case of a tight match, strong conclusions could be risky.</p>
 
 
@@ -1310,103 +1318,108 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 <span id="cb6-202"><a href="#cb6-202" aria-hidden="true" tabindex="-1"></a><span class="co">#| tbl-cap: "XGBoost against the baselines, both windows."</span></span>
 <span id="cb6-203"><a href="#cb6-203" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
 <span id="cb6-204"><a href="#cb6-204" aria-hidden="true" tabindex="-1"></a>models <span class="op">=</span> baselines <span class="op">+</span> [<span class="st">"xgboost_btrotta"</span>]</span>
-<span id="cb6-205"><a href="#cb6-205" aria-hidden="true" tabindex="-1"></a>md(rename_models(pl.concat([</span>
+<span id="cb6-205"><a href="#cb6-205" aria-hidden="true" tabindex="-1"></a>XGB_TABLE <span class="op">=</span> pl.concat([</span>
 <span id="cb6-206"><a href="#cb6-206" aria-hidden="true" tabindex="-1"></a>    table_of(models, role).with_columns(pl.lit(role).alias(<span class="st">"window"</span>))</span>
 <span id="cb6-207"><a href="#cb6-207" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> role <span class="kw">in</span> (<span class="st">"validation"</span>, <span class="st">"test"</span>)</span>
-<span id="cb6-208"><a href="#cb6-208" aria-hidden="true" tabindex="-1"></a>])).select([<span class="st">"window"</span>, <span class="st">"model"</span>, <span class="st">"n_series"</span>] <span class="op">+</span> metrics.METRICS).sort(<span class="st">"window"</span>, <span class="st">"WMAPE"</span>))</span>
-<span id="cb6-209"><a href="#cb6-209" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-210"><a href="#cb6-210" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-213"><a href="#cb6-213" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb6-214"><a href="#cb6-214" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-buckets</span></span>
-<span id="cb6-215"><a href="#cb6-215" aria-hidden="true" tabindex="-1"></a><span class="co">#| fig-cap: "Validation window, by horizon bucket. Baselines in grey. The gap to the 28-day mean opens except in the second bucket."</span></span>
-<span id="cb6-216"><a href="#cb6-216" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
-<span id="cb6-217"><a href="#cb6-217" aria-hidden="true" tabindex="-1"></a>fig, axes <span class="op">=</span> plots.plot_by_bucket(table_of(models, <span class="st">"validation"</span>, by<span class="op">=</span><span class="st">"horizon_bucket"</span>),</span>
-<span id="cb6-218"><a href="#cb6-218" aria-hidden="true" tabindex="-1"></a>                                 metrics.METRICS)</span>
-<span id="cb6-219"><a href="#cb6-219" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
-<span id="cb6-220"><a href="#cb6-220" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-221"><a href="#cb6-221" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-224"><a href="#cb6-224" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb6-225"><a href="#cb6-225" aria-hidden="true" tabindex="-1"></a><span class="co">#| echo: false</span></span>
-<span id="cb6-226"><a href="#cb6-226" aria-hidden="true" tabindex="-1"></a><span class="co"># Two ways of putting the gain over the 28-day mean on a relative scale.</span></span>
-<span id="cb6-227"><a href="#cb6-227" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> relative_gain(role):</span>
-<span id="cb6-228"><a href="#cb6-228" aria-hidden="true" tabindex="-1"></a>    table <span class="op">=</span> metrics.compare(</span>
-<span id="cb6-229"><a href="#cb6-229" aria-hidden="true" tabindex="-1"></a>        {model: scored(model, role)</span>
-<span id="cb6-230"><a href="#cb6-230" aria-hidden="true" tabindex="-1"></a>         <span class="cf">for</span> model <span class="kw">in</span> (<span class="st">"zero"</span>, <span class="st">"moving_average_28d"</span>, <span class="st">"xgboost_btrotta"</span>)},</span>
-<span id="cb6-231"><a href="#cb6-231" aria-hidden="true" tabindex="-1"></a>        reference<span class="op">=</span><span class="st">"moving_average_28d"</span>,</span>
-<span id="cb6-232"><a href="#cb6-232" aria-hidden="true" tabindex="-1"></a>    )</span>
-<span id="cb6-233"><a href="#cb6-233" aria-hidden="true" tabindex="-1"></a>    wmape <span class="op">=</span> {row[<span class="st">"model"</span>]: row[<span class="st">"WMAPE"</span>] <span class="cf">for</span> row <span class="kw">in</span> table.iter_rows(named<span class="op">=</span><span class="va">True</span>)}</span>
-<span id="cb6-234"><a href="#cb6-234" aria-hidden="true" tabindex="-1"></a>    change <span class="op">=</span> table.<span class="bu">filter</span>(pl.col(<span class="st">"model"</span>) <span class="op">==</span> <span class="st">"xgboost_btrotta"</span>)[<span class="st">"WMAPE_change_%"</span>].item()</span>
-<span id="cb6-235"><a href="#cb6-235" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {</span>
-<span id="cb6-236"><a href="#cb6-236" aria-hidden="true" tabindex="-1"></a>        <span class="co"># 1. Plain relative error reduction. Negative change = lower error, so flip the</span></span>
-<span id="cb6-237"><a href="#cb6-237" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    sign. MAE gives the identical percentage and is not quoted twice: both</span></span>
-<span id="cb6-238"><a href="#cb6-238" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    metrics divide the same sum of absolute errors by a denominator (row count,</span></span>
-<span id="cb6-239"><a href="#cb6-239" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    total actual) that no model can move, so their ratios are the same number.</span></span>
-<span id="cb6-240"><a href="#cb6-240" aria-hidden="true" tabindex="-1"></a>        <span class="st">"cut"</span>: <span class="op">-</span>change,</span>
-<span id="cb6-241"><a href="#cb6-241" aria-hidden="true" tabindex="-1"></a>        <span class="co"># 2. The same gain as a share of what the 28-day mean itself won over forecasting</span></span>
-<span id="cb6-242"><a href="#cb6-242" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    nothing. The zero forecast is scored here rather than assumed to sit at</span></span>
-<span id="cb6-243"><a href="#cb6-243" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    WMAPE 100, so the anchor stays honest if the roster ever changes.</span></span>
-<span id="cb6-244"><a href="#cb6-244" aria-hidden="true" tabindex="-1"></a>        <span class="st">"of_mean_gain"</span>: <span class="dv">100</span> <span class="op">*</span> (wmape[<span class="st">"moving_average_28d"</span>] <span class="op">-</span> wmape[<span class="st">"xgboost_btrotta"</span>])</span>
-<span id="cb6-245"><a href="#cb6-245" aria-hidden="true" tabindex="-1"></a>                            <span class="op">/</span> (wmape[<span class="st">"zero"</span>] <span class="op">-</span> wmape[<span class="st">"moving_average_28d"</span>]),</span>
-<span id="cb6-246"><a href="#cb6-246" aria-hidden="true" tabindex="-1"></a>    }</span>
-<span id="cb6-247"><a href="#cb6-247" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-248"><a href="#cb6-248" aria-hidden="true" tabindex="-1"></a>GAIN <span class="op">=</span> {role: relative_gain(role) <span class="cf">for</span> role <span class="kw">in</span> (<span class="st">"validation"</span>, <span class="st">"test"</span>)}</span>
-<span id="cb6-249"><a href="#cb6-249" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-250"><a href="#cb6-250" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-251"><a href="#cb6-251" aria-hidden="true" tabindex="-1"></a>With the 52 features, we get **0.8 WMAPE points on validation, 1.2 on test.**</span>
-<span id="cb6-252"><a href="#cb6-252" aria-hidden="true" tabindex="-1"></a>In relative terms that is a cut of <span class="in">`{python} f"{GAIN['validation']['cut']:.1f}"`</span>% in WMAPE on</span>
-<span id="cb6-253"><a href="#cb6-253" aria-hidden="true" tabindex="-1"></a>validation and <span class="in">`{python} f"{GAIN['test']['cut']:.1f}"`</span>% on test — the same percentages for MAE,</span>
-<span id="cb6-254"><a href="#cb6-254" aria-hidden="true" tabindex="-1"></a>which cannot differ, since both metrics divide the same sum of absolute errors by a denominator</span>
-<span id="cb6-255"><a href="#cb6-255" aria-hidden="true" tabindex="-1"></a>no model can move — and set against the fifth of the error the 28-day mean had already removed</span>
-<span id="cb6-256"><a href="#cb6-256" aria-hidden="true" tabindex="-1"></a>on its own, the fifty-two features add only <span class="in">`{python} f"{GAIN['validation']['of_mean_gain']:.0f}"`</span>%</span>
-<span id="cb6-257"><a href="#cb6-257" aria-hidden="true" tabindex="-1"></a>of that ground on validation and <span class="in">`{python} f"{GAIN['test']['of_mean_gain']:.0f}"`</span>% on test.</span>
-<span id="cb6-258"><a href="#cb6-258" aria-hidden="true" tabindex="-1"></a>The horizon view says where that comes from — the two are nearly tied over the second</span>
-<span id="cb6-259"><a href="#cb6-259" aria-hidden="true" tabindex="-1"></a>week, then the mean decays while the model does not, which is the one thing a model</span>
-<span id="cb6-260"><a href="#cb6-260" aria-hidden="true" tabindex="-1"></a>with a calendar in it ought to manage. The first week is to the model's advantage too: it </span>
-<span id="cb6-261"><a href="#cb6-261" aria-hidden="true" tabindex="-1"></a>is where it should be strongest after all.</span>
-<span id="cb6-262"><a href="#cb6-262" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-263"><a href="#cb6-263" aria-hidden="true" tabindex="-1"></a>The per-series view is blunter.</span>
-<span id="cb6-264"><a href="#cb6-264" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-267"><a href="#cb6-267" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb6-268"><a href="#cb6-268" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-index</span></span>
-<span id="cb6-269"><a href="#cb6-269" aria-hidden="true" tabindex="-1"></a><span class="co">#| fig-cap: "Per-series difference in WQL, XGBoost against the 28-day mean, series ordered by sales volume in the window."</span></span>
-<span id="cb6-270"><a href="#cb6-270" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
-<span id="cb6-271"><a href="#cb6-271" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> per_series_wql(model):</span>
-<span id="cb6-272"><a href="#cb6-272" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> metrics.score(scored(model, <span class="st">"validation"</span>), by<span class="op">=</span><span class="st">"id"</span>).select(</span>
-<span id="cb6-273"><a href="#cb6-273" aria-hidden="true" tabindex="-1"></a>        <span class="st">"id"</span>, pl.col(<span class="st">"WQL"</span>).alias(<span class="ss">f"WQL_</span><span class="sc">{</span>model<span class="sc">}</span><span class="ss">"</span>))</span>
-<span id="cb6-274"><a href="#cb6-274" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-275"><a href="#cb6-275" aria-hidden="true" tabindex="-1"></a>volume <span class="op">=</span> (scored(<span class="st">"xgboost_btrotta"</span>, <span class="st">"validation"</span>)</span>
-<span id="cb6-276"><a href="#cb6-276" aria-hidden="true" tabindex="-1"></a>          .group_by(<span class="st">"id"</span>).agg(pl.col(<span class="st">"y"</span>).<span class="bu">sum</span>().alias(<span class="st">"volume"</span>)))</span>
-<span id="cb6-277"><a href="#cb6-277" aria-hidden="true" tabindex="-1"></a>comparison <span class="op">=</span> (per_series_wql(<span class="st">"moving_average_28d"</span>)</span>
-<span id="cb6-278"><a href="#cb6-278" aria-hidden="true" tabindex="-1"></a>              .join(per_series_wql(<span class="st">"xgboost_btrotta"</span>), on<span class="op">=</span><span class="st">"id"</span>)</span>
-<span id="cb6-279"><a href="#cb6-279" aria-hidden="true" tabindex="-1"></a>              .join(volume, on<span class="op">=</span><span class="st">"id"</span>))</span>
-<span id="cb6-280"><a href="#cb6-280" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-281"><a href="#cb6-281" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">11</span>, <span class="fl">3.5</span>))</span>
-<span id="cb6-282"><a href="#cb6-282" aria-hidden="true" tabindex="-1"></a>share <span class="op">=</span> plots.index_plot(ax, comparison, <span class="st">"WQL"</span>,</span>
-<span id="cb6-283"><a href="#cb6-283" aria-hidden="true" tabindex="-1"></a>                         <span class="st">"moving_average_28d"</span>, <span class="st">"xgboost_btrotta"</span>, order_by<span class="op">=</span><span class="st">"volume"</span>)</span>
-<span id="cb6-284"><a href="#cb6-284" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
-<span id="cb6-285"><a href="#cb6-285" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb6-286"><a href="#cb6-286" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-287"><a href="#cb6-287" aria-hidden="true" tabindex="-1"></a>XGBoost has the lower WQL (*ie* WMAPE) on <span class="in">`{python} f"{share:.0%}"`</span> of series. It loses on the majority</span>
-<span id="cb6-288"><a href="#cb6-288" aria-hidden="true" tabindex="-1"></a>of items and still wins overall, because the items it wins on are the ones that sell. Therefore, </span>
-<span id="cb6-289"><a href="#cb6-289" aria-hidden="true" tabindex="-1"></a>it reacts better to changes. The core difficulty of the dataset really is how low the values are.</span>
-<span id="cb6-290"><a href="#cb6-290" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-291"><a href="#cb6-291" aria-hidden="true" tabindex="-1"></a><span class="fu">## What the baseline settles</span></span>
-<span id="cb6-292"><a href="#cb6-292" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-293"><a href="#cb6-293" aria-hidden="true" tabindex="-1"></a>Three things carry into the next post.</span>
-<span id="cb6-294"><a href="#cb6-294" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-295"><a href="#cb6-295" aria-hidden="true" tabindex="-1"></a>**The dataset's difficulty.** As we showed, this prediction problem is made much harder by the low </span>
-<span id="cb6-296"><a href="#cb6-296" aria-hidden="true" tabindex="-1"></a>volume of the series (which are integer values, so it isn't just a matter of scaling).</span>
+<span id="cb6-208"><a href="#cb6-208" aria-hidden="true" tabindex="-1"></a>])</span>
+<span id="cb6-209"><a href="#cb6-209" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-210"><a href="#cb6-210" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> wmape(model, window):</span>
+<span id="cb6-211"><a href="#cb6-211" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""One WMAPE cell of this table, so the prose below cannot drift away from it."""</span></span>
+<span id="cb6-212"><a href="#cb6-212" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> XGB_TABLE.<span class="bu">filter</span>(pl.col(<span class="st">"model"</span>) <span class="op">==</span> model,</span>
+<span id="cb6-213"><a href="#cb6-213" aria-hidden="true" tabindex="-1"></a>                            pl.col(<span class="st">"window"</span>) <span class="op">==</span> window)[<span class="st">"WMAPE"</span>].item()</span>
+<span id="cb6-214"><a href="#cb6-214" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-215"><a href="#cb6-215" aria-hidden="true" tabindex="-1"></a>md(rename_models(XGB_TABLE)</span>
+<span id="cb6-216"><a href="#cb6-216" aria-hidden="true" tabindex="-1"></a>   .select([<span class="st">"window"</span>, <span class="st">"model"</span>, <span class="st">"n_series"</span>] <span class="op">+</span> metrics.METRICS).sort(<span class="st">"window"</span>, <span class="st">"WMAPE"</span>))</span>
+<span id="cb6-217"><a href="#cb6-217" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-218"><a href="#cb6-218" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-221"><a href="#cb6-221" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb6-222"><a href="#cb6-222" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-buckets</span></span>
+<span id="cb6-223"><a href="#cb6-223" aria-hidden="true" tabindex="-1"></a><span class="co">#| fig-cap: "Validation window, by horizon bucket. Baselines in grey. The gap to the 28-day mean opens except in the second bucket."</span></span>
+<span id="cb6-224"><a href="#cb6-224" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
+<span id="cb6-225"><a href="#cb6-225" aria-hidden="true" tabindex="-1"></a>fig, axes <span class="op">=</span> plots.plot_by_bucket(table_of(models, <span class="st">"validation"</span>, by<span class="op">=</span><span class="st">"horizon_bucket"</span>),</span>
+<span id="cb6-226"><a href="#cb6-226" aria-hidden="true" tabindex="-1"></a>                                 metrics.METRICS)</span>
+<span id="cb6-227"><a href="#cb6-227" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
+<span id="cb6-228"><a href="#cb6-228" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-229"><a href="#cb6-229" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-232"><a href="#cb6-232" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb6-233"><a href="#cb6-233" aria-hidden="true" tabindex="-1"></a><span class="co">#| echo: false</span></span>
+<span id="cb6-234"><a href="#cb6-234" aria-hidden="true" tabindex="-1"></a><span class="co"># Two ways of putting the gain over the 28-day mean on a relative scale.</span></span>
+<span id="cb6-235"><a href="#cb6-235" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> relative_gain(role):</span>
+<span id="cb6-236"><a href="#cb6-236" aria-hidden="true" tabindex="-1"></a>    table <span class="op">=</span> metrics.compare(</span>
+<span id="cb6-237"><a href="#cb6-237" aria-hidden="true" tabindex="-1"></a>        {model: scored(model, role)</span>
+<span id="cb6-238"><a href="#cb6-238" aria-hidden="true" tabindex="-1"></a>         <span class="cf">for</span> model <span class="kw">in</span> (<span class="st">"zero"</span>, <span class="st">"moving_average_28d"</span>, <span class="st">"xgboost_btrotta"</span>)},</span>
+<span id="cb6-239"><a href="#cb6-239" aria-hidden="true" tabindex="-1"></a>        reference<span class="op">=</span><span class="st">"moving_average_28d"</span>,</span>
+<span id="cb6-240"><a href="#cb6-240" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb6-241"><a href="#cb6-241" aria-hidden="true" tabindex="-1"></a>    wmape <span class="op">=</span> {row[<span class="st">"model"</span>]: row[<span class="st">"WMAPE"</span>] <span class="cf">for</span> row <span class="kw">in</span> table.iter_rows(named<span class="op">=</span><span class="va">True</span>)}</span>
+<span id="cb6-242"><a href="#cb6-242" aria-hidden="true" tabindex="-1"></a>    change <span class="op">=</span> table.<span class="bu">filter</span>(pl.col(<span class="st">"model"</span>) <span class="op">==</span> <span class="st">"xgboost_btrotta"</span>)[<span class="st">"WMAPE_change_%"</span>].item()</span>
+<span id="cb6-243"><a href="#cb6-243" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {</span>
+<span id="cb6-244"><a href="#cb6-244" aria-hidden="true" tabindex="-1"></a>        <span class="co"># 1. Plain relative error reduction. Negative change = lower error, so flip the</span></span>
+<span id="cb6-245"><a href="#cb6-245" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    sign. MAE gives the identical percentage and is not quoted twice: both</span></span>
+<span id="cb6-246"><a href="#cb6-246" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    metrics divide the same sum of absolute errors by a denominator (row count,</span></span>
+<span id="cb6-247"><a href="#cb6-247" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    total actual) that no model can move, so their ratios are the same number.</span></span>
+<span id="cb6-248"><a href="#cb6-248" aria-hidden="true" tabindex="-1"></a>        <span class="st">"cut"</span>: <span class="op">-</span>change,</span>
+<span id="cb6-249"><a href="#cb6-249" aria-hidden="true" tabindex="-1"></a>        <span class="co"># 2. The same gain as a share of what the 28-day mean itself won over forecasting</span></span>
+<span id="cb6-250"><a href="#cb6-250" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    nothing. The zero forecast is scored here rather than assumed to sit at</span></span>
+<span id="cb6-251"><a href="#cb6-251" aria-hidden="true" tabindex="-1"></a>        <span class="co">#    WMAPE 100, so the anchor stays honest if the roster ever changes.</span></span>
+<span id="cb6-252"><a href="#cb6-252" aria-hidden="true" tabindex="-1"></a>        <span class="st">"of_mean_gain"</span>: <span class="dv">100</span> <span class="op">*</span> (wmape[<span class="st">"moving_average_28d"</span>] <span class="op">-</span> wmape[<span class="st">"xgboost_btrotta"</span>])</span>
+<span id="cb6-253"><a href="#cb6-253" aria-hidden="true" tabindex="-1"></a>                            <span class="op">/</span> (wmape[<span class="st">"zero"</span>] <span class="op">-</span> wmape[<span class="st">"moving_average_28d"</span>]),</span>
+<span id="cb6-254"><a href="#cb6-254" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb6-255"><a href="#cb6-255" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-256"><a href="#cb6-256" aria-hidden="true" tabindex="-1"></a>GAIN <span class="op">=</span> {role: relative_gain(role) <span class="cf">for</span> role <span class="kw">in</span> (<span class="st">"validation"</span>, <span class="st">"test"</span>)}</span>
+<span id="cb6-257"><a href="#cb6-257" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-258"><a href="#cb6-258" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-259"><a href="#cb6-259" aria-hidden="true" tabindex="-1"></a>With the 52 features, we get **0.8 WMAPE points on validation, 1.2 on test.**</span>
+<span id="cb6-260"><a href="#cb6-260" aria-hidden="true" tabindex="-1"></a>In relative terms that is a cut of <span class="in">`{python} f"{GAIN['validation']['cut']:.1f}"`</span>% in WMAPE on</span>
+<span id="cb6-261"><a href="#cb6-261" aria-hidden="true" tabindex="-1"></a>validation and <span class="in">`{python} f"{GAIN['test']['cut']:.1f}"`</span>% on test — the same percentages for MAE,</span>
+<span id="cb6-262"><a href="#cb6-262" aria-hidden="true" tabindex="-1"></a>which cannot differ — and set against the fifth of the error the 28-day mean had already removed</span>
+<span id="cb6-263"><a href="#cb6-263" aria-hidden="true" tabindex="-1"></a>on its own, the fifty-two features add only <span class="in">`{python} f"{GAIN['validation']['of_mean_gain']:.0f}"`</span>%</span>
+<span id="cb6-264"><a href="#cb6-264" aria-hidden="true" tabindex="-1"></a>of that ground on validation and <span class="in">`{python} f"{GAIN['test']['of_mean_gain']:.0f}"`</span>% on test.</span>
+<span id="cb6-265"><a href="#cb6-265" aria-hidden="true" tabindex="-1"></a>The horizon view says where that comes from — for all metrics except P90, the two are nearly tied after the first week. So the first week is especially to the model's advantage: it </span>
+<span id="cb6-266"><a href="#cb6-266" aria-hidden="true" tabindex="-1"></a>is where it should indeed be at its strongest.</span>
+<span id="cb6-267"><a href="#cb6-267" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-268"><a href="#cb6-268" aria-hidden="true" tabindex="-1"></a>The per-series view is blunter.</span>
+<span id="cb6-269"><a href="#cb6-269" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-272"><a href="#cb6-272" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb6-273"><a href="#cb6-273" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: fig-index</span></span>
+<span id="cb6-274"><a href="#cb6-274" aria-hidden="true" tabindex="-1"></a><span class="co">#| fig-cap: "Per-series difference in WQL, XGBoost against the 28-day mean, series ordered by sales volume in the window."</span></span>
+<span id="cb6-275"><a href="#cb6-275" aria-hidden="true" tabindex="-1"></a><span class="co">#| code-fold: true</span></span>
+<span id="cb6-276"><a href="#cb6-276" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> per_series_wql(model):</span>
+<span id="cb6-277"><a href="#cb6-277" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> metrics.score(scored(model, <span class="st">"validation"</span>), by<span class="op">=</span><span class="st">"id"</span>).select(</span>
+<span id="cb6-278"><a href="#cb6-278" aria-hidden="true" tabindex="-1"></a>        <span class="st">"id"</span>, pl.col(<span class="st">"WQL"</span>).alias(<span class="ss">f"WQL_</span><span class="sc">{</span>model<span class="sc">}</span><span class="ss">"</span>))</span>
+<span id="cb6-279"><a href="#cb6-279" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-280"><a href="#cb6-280" aria-hidden="true" tabindex="-1"></a>volume <span class="op">=</span> (scored(<span class="st">"xgboost_btrotta"</span>, <span class="st">"validation"</span>)</span>
+<span id="cb6-281"><a href="#cb6-281" aria-hidden="true" tabindex="-1"></a>          .group_by(<span class="st">"id"</span>).agg(pl.col(<span class="st">"y"</span>).<span class="bu">sum</span>().alias(<span class="st">"volume"</span>)))</span>
+<span id="cb6-282"><a href="#cb6-282" aria-hidden="true" tabindex="-1"></a>comparison <span class="op">=</span> (per_series_wql(<span class="st">"moving_average_28d"</span>)</span>
+<span id="cb6-283"><a href="#cb6-283" aria-hidden="true" tabindex="-1"></a>              .join(per_series_wql(<span class="st">"xgboost_btrotta"</span>), on<span class="op">=</span><span class="st">"id"</span>)</span>
+<span id="cb6-284"><a href="#cb6-284" aria-hidden="true" tabindex="-1"></a>              .join(volume, on<span class="op">=</span><span class="st">"id"</span>))</span>
+<span id="cb6-285"><a href="#cb6-285" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-286"><a href="#cb6-286" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">11</span>, <span class="fl">3.5</span>))</span>
+<span id="cb6-287"><a href="#cb6-287" aria-hidden="true" tabindex="-1"></a>share <span class="op">=</span> plots.index_plot(ax, comparison, <span class="st">"WQL"</span>,</span>
+<span id="cb6-288"><a href="#cb6-288" aria-hidden="true" tabindex="-1"></a>                         <span class="st">"moving_average_28d"</span>, <span class="st">"xgboost_btrotta"</span>, order_by<span class="op">=</span><span class="st">"volume"</span>)</span>
+<span id="cb6-289"><a href="#cb6-289" aria-hidden="true" tabindex="-1"></a>plt.show()</span>
+<span id="cb6-290"><a href="#cb6-290" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb6-291"><a href="#cb6-291" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-292"><a href="#cb6-292" aria-hidden="true" tabindex="-1"></a>XGBoost has the lower WQL (*ie* WMAPE) on <span class="in">`{python} f"{share:.0%}"`</span> of series. It loses on the majority</span>
+<span id="cb6-293"><a href="#cb6-293" aria-hidden="true" tabindex="-1"></a>of items and still wins overall, because the items it wins on are the ones that sell. Therefore, </span>
+<span id="cb6-294"><a href="#cb6-294" aria-hidden="true" tabindex="-1"></a>it reacts better to changes. The core difficulty of the dataset really is how low the values are.</span>
+<span id="cb6-295"><a href="#cb6-295" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-296"><a href="#cb6-296" aria-hidden="true" tabindex="-1"></a><span class="fu">## What the baseline settles</span></span>
 <span id="cb6-297"><a href="#cb6-297" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-298"><a href="#cb6-298" aria-hidden="true" tabindex="-1"></a>**A number to beat.** WMAPE 78.8 on validation, 76.4 on test (first bucket, and the others matter as much) — and the honest framing is</span>
-<span id="cb6-299"><a href="#cb6-299" aria-hidden="true" tabindex="-1"></a>that most of that was already available from a 28-day mean, despite how rough of an estimate it is.</span>
-<span id="cb6-300"><a href="#cb6-300" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-301"><a href="#cb6-301" aria-hidden="true" tabindex="-1"></a>**A caveat.** XGBoost is trained on squared error, so it estimates a</span>
-<span id="cb6-302"><a href="#cb6-302" aria-hidden="true" tabindex="-1"></a>conditional mean. On absolute-error metrics the optimal point forecast is the *median*, so</span>
-<span id="cb6-303"><a href="#cb6-303" aria-hidden="true" tabindex="-1"></a>any model that returns a median starts with a structural advantage on MAE and WMAPE that has</span>
-<span id="cb6-304"><a href="#cb6-304" aria-hidden="true" tabindex="-1"></a>nothing to do with forecasting better. However, Chronos-2 returns a median. Moreover, because </span>
-<span id="cb6-305"><a href="#cb6-305" aria-hidden="true" tabindex="-1"></a>it is distributional, Chronos-2 has a slight edge. When looking at WQL, without regards to </span>
-<span id="cb6-306"><a href="#cb6-306" aria-hidden="true" tabindex="-1"></a>if the derived point forecast is actually better. So in case of a tight</span>
-<span id="cb6-307"><a href="#cb6-307" aria-hidden="true" tabindex="-1"></a>match, strong conclusions could be risky.</span>
+<span id="cb6-298"><a href="#cb6-298" aria-hidden="true" tabindex="-1"></a>Three things carry into the next post.</span>
+<span id="cb6-299"><a href="#cb6-299" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-300"><a href="#cb6-300" aria-hidden="true" tabindex="-1"></a>**The dataset's difficulty.** As we showed, this prediction problem is made much harder by the low </span>
+<span id="cb6-301"><a href="#cb6-301" aria-hidden="true" tabindex="-1"></a>volume of the series (which are integer values, so it isn't just a matter of scaling).</span>
+<span id="cb6-302"><a href="#cb6-302" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-303"><a href="#cb6-303" aria-hidden="true" tabindex="-1"></a>**A number to beat.** WMAPE <span class="in">`{python} f"{wmape('xgboost_btrotta', 'validation'):.1f}"`</span> on validation, <span class="in">`{python} f"{wmape('xgboost_btrotta', 'test'):.1f}"`</span> on test (pooled over the whole forecast horizon) — and the honest framing is</span>
+<span id="cb6-304"><a href="#cb6-304" aria-hidden="true" tabindex="-1"></a>that most of that was already available from a 28-day mean (<span class="in">`{python} f"{wmape('moving_average_28d', 'validation'):.1f}"`</span> and <span class="in">`{python} f"{wmape('moving_average_28d', 'test'):.1f}"`</span>), despite how rough of an estimate it is.</span>
+<span id="cb6-305"><a href="#cb6-305" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-306"><a href="#cb6-306" aria-hidden="true" tabindex="-1"></a>**A caveat.** XGBoost is trained on squared error, so it estimates a</span>
+<span id="cb6-307"><a href="#cb6-307" aria-hidden="true" tabindex="-1"></a>conditional mean. On absolute-error metrics the optimal point forecast is the *median*, so</span>
+<span id="cb6-308"><a href="#cb6-308" aria-hidden="true" tabindex="-1"></a>any model that returns a median starts with a structural advantage on MAE and WMAPE that has</span>
+<span id="cb6-309"><a href="#cb6-309" aria-hidden="true" tabindex="-1"></a>nothing to do with forecasting better. However, Chronos-2 returns a median. Moreover, because </span>
+<span id="cb6-310"><a href="#cb6-310" aria-hidden="true" tabindex="-1"></a>it is distributional, Chronos-2 has a slight edge. When looking at WQL, without regards to </span>
+<span id="cb6-311"><a href="#cb6-311" aria-hidden="true" tabindex="-1"></a>if the derived point forecast is actually better. So in case of a tight</span>
+<span id="cb6-312"><a href="#cb6-312" aria-hidden="true" tabindex="-1"></a>match, strong conclusions could be risky.</span>
 </code></pre></div><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></div>
 </div></div></div></div></div>
 </div> <!-- /content -->

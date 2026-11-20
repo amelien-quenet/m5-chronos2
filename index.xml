@@ -2940,7 +2940,9 @@ background-color: null;
 font-style: inherit;">+</span> [<span class="st" style="color: #20794D;
 background-color: null;
 font-style: inherit;">"xgboost_btrotta"</span>]</span>
-<span id="cb3-2">md(rename_models(pl.concat([</span>
+<span id="cb3-2">XGB_TABLE <span class="op" style="color: #5E5E5E;
+background-color: null;
+font-style: inherit;">=</span> pl.concat([</span>
 <span id="cb3-3">    table_of(models, role).with_columns(pl.lit(role).alias(<span class="st" style="color: #20794D;
 background-color: null;
 font-style: inherit;">"window"</span>))</span>
@@ -2955,7 +2957,35 @@ background-color: null;
 font-style: inherit;">"validation"</span>, <span class="st" style="color: #20794D;
 background-color: null;
 font-style: inherit;">"test"</span>)</span>
-<span id="cb3-5">])).select([<span class="st" style="color: #20794D;
+<span id="cb3-5">])</span>
+<span id="cb3-6"></span>
+<span id="cb3-7"><span class="kw" style="color: #003B4F;
+background-color: null;
+font-weight: bold;
+font-style: inherit;">def</span> wmape(model, window):</span>
+<span id="cb3-8">    <span class="co" style="color: #5E5E5E;
+background-color: null;
+font-style: inherit;">"""One WMAPE cell of this table, so the prose below cannot drift away from it."""</span></span>
+<span id="cb3-9">    <span class="cf" style="color: #003B4F;
+background-color: null;
+font-weight: bold;
+font-style: inherit;">return</span> XGB_TABLE.<span class="bu" style="color: null;
+background-color: null;
+font-style: inherit;">filter</span>(pl.col(<span class="st" style="color: #20794D;
+background-color: null;
+font-style: inherit;">"model"</span>) <span class="op" style="color: #5E5E5E;
+background-color: null;
+font-style: inherit;">==</span> model,</span>
+<span id="cb3-10">                            pl.col(<span class="st" style="color: #20794D;
+background-color: null;
+font-style: inherit;">"window"</span>) <span class="op" style="color: #5E5E5E;
+background-color: null;
+font-style: inherit;">==</span> window)[<span class="st" style="color: #20794D;
+background-color: null;
+font-style: inherit;">"WMAPE"</span>].item()</span>
+<span id="cb3-11"></span>
+<span id="cb3-12">md(rename_models(XGB_TABLE)</span>
+<span id="cb3-13">   .select([<span class="st" style="color: #20794D;
 background-color: null;
 font-style: inherit;">"window"</span>, <span class="st" style="color: #20794D;
 background-color: null;
@@ -3115,7 +3145,7 @@ Figure&nbsp;2: Validation window, by horizon bucket. Baselines in grey. The gap 
 </div>
 </div>
 </div>
-<p>With the 52 features, we get <strong>0.8 WMAPE points on validation, 1.2 on test.</strong> In relative terms that is a cut of 1.0% in WMAPE on validation and 1.6% on test — the same percentages for MAE, which cannot differ, since both metrics divide the same sum of absolute errors by a denominator no model can move — and set against the fifth of the error the 28-day mean had already removed on its own, the fifty-two features add only 4% of that ground on validation and 5% on test. The horizon view says where that comes from — the two are nearly tied over the second week, then the mean decays while the model does not, which is the one thing a model with a calendar in it ought to manage. The first week is to the model’s advantage too: it is where it should be strongest after all.</p>
+<p>With the 52 features, we get <strong>0.8 WMAPE points on validation, 1.2 on test.</strong> In relative terms that is a cut of 1.0% in WMAPE on validation and 1.6% on test — the same percentages for MAE, which cannot differ — and set against the fifth of the error the 28-day mean had already removed on its own, the fifty-two features add only 4% of that ground on validation and 5% on test. The horizon view says where that comes from — for all metrics except P90, the two are nearly tied after the first week. So the first week is especially to the model’s advantage: it is where it should indeed be at its strongest.</p>
 <p>The per-series view is blunter.</p>
 <div id="cell-fig-index" class="cell" data-execution_count="9">
 <details class="code-fold">
@@ -3226,7 +3256,7 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 <h2 class="anchored" data-anchor-id="what-the-baseline-settles">What the baseline settles</h2>
 <p>Three things carry into the next post.</p>
 <p><strong>The dataset’s difficulty.</strong> As we showed, this prediction problem is made much harder by the low volume of the series (which are integer values, so it isn’t just a matter of scaling).</p>
-<p><strong>A number to beat.</strong> WMAPE 78.8 on validation, 76.4 on test (first bucket, and the others matter as much) — and the honest framing is that most of that was already available from a 28-day mean, despite how rough of an estimate it is.</p>
+<p><strong>A number to beat.</strong> WMAPE 78.8 on validation, 76.4 on test (pooled over the whole forecast horizon) — and the honest framing is that most of that was already available from a 28-day mean (79.6 and 77.6), despite how rough of an estimate it is.</p>
 <p><strong>A caveat.</strong> XGBoost is trained on squared error, so it estimates a conditional mean. On absolute-error metrics the optimal point forecast is the <em>median</em>, so any model that returns a median starts with a structural advantage on MAE and WMAPE that has nothing to do with forecasting better. However, Chronos-2 returns a median. Moreover, because it is distributional, Chronos-2 has a slight edge. When looking at WQL, without regards to if the derived point forecast is actually better. So in case of a tight match, strong conclusions could be risky.</p>
 
 
@@ -5254,7 +5284,7 @@ font-style: inherit;">1</span>))</span>
 <div id="fig-final-examples" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
 <div aria-describedby="fig-final-examples-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<img src="https://amelien-quenet.fr/m5-chronos2/posts/02-chronos2/index_files/figure-html/fig-final-examples-output-1.png" width="1204" height="1089" class="figure-img">
+<img src="https://amelien-quenet.fr/m5-chronos2/posts/02-chronos2/index_files/figure-html/fig-final-examples-output-1.png" width="1209" height="1089" class="figure-img">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-final-examples-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 Figure&nbsp;8: Four test-window series at the 98th, 75th, 50th and 25th percentile of volume. Bands: the final model’s quantiles. Dots: what sold.
