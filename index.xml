@@ -3281,22 +3281,22 @@ Figure&nbsp;3: Per-series difference in WQL, XGBoost against the 28-day mean, se
 
 
 
-<p><a href="../01-xgboost/">The previous post</a> left me a number to beat: WMAPE 78.8 on the validation window, from 52 hand-built features and 28 trained models. Here I hand Chronos-2 the sales history and nothing else.</p>
+<p><a href="../01-xgboost/">The previous post</a> left me a number to beat: WMAPE 78.8 on the validation window. Intros post I hand Chronos-2 the sales history and <strong>nothing else.</strong></p>
 <section id="what-the-model-is" class="level2">
 <h2 class="anchored" data-anchor-id="what-the-model-is">What the model is</h2>
-<p>Chronos-2 is a pretrained forecaster of about 120M parameters, a T5-style encoder. It cuts the history into patches of 16 days, embeds each as a vector, and emits the quantiles of the <em>whole</em> horizon in a single forward pass — no token vocabulary, no step-by-step decoding, and the horizon length is an input rather than a trained-in constant. Its point forecast is the median.</p>
-<p>The original project behind Chronos-2, at Amazon, was to use an LLM to predict inside the “language” of time series. But building a vocabulary for real numbers turned out to be inefficient, which led the team to strip both the first and the last layer of the architecture and keep only the matrix algebra in between.</p>
-<p>I chose M5 partly because Chronos-2 has no training leakage on it, so a zero-shot number is an authentic statement.</p>
-<p>Out of the box means: no covariates, no fine-tuning, cross-learning off, default context length. One detail about that default matters more than it looks. The model reads the last <code>context_length</code> days of a series and <strong>silently ignores the rest</strong> — no warning, no error. On daily M5 data the longest history at the validation origin is 1,885 days, shorter than the documented 2,048 default and far shorter than the 8,192 maximum, so every series is read in full. On a finer-grained grid the same 8,192 steps would be a much shorter span and the default would be quietly truncating most of the history.</p>
+<p>Chronos-2 is a <strong>pre-trained T5-style encoder for forecasting of about 120M parameters</strong>. It cuts the history into patches of 16 days, embeds each as a vector, and emits the quantiles of the <em>whole</em> horizon in a <strong>single forward pass</strong> — no token vocabulary, no step-by-step decoding, and the horizon length is an input, contrary to an LLM application of the same architecture. The derived point forecast for the study is <strong>the median</strong>.</p>
+<p>The original project behind Chronos-2 (created by an Amazon research team) was to <strong>train an LLM to understand the “language” of time series</strong>, and thus generate the most probable future. But building a finite vocabulary for real numbers turned out to be inefficient for out-of-the-box applications, which led the team to strip both the first and the last layer of the architecture to keep only the calculus layers in between - which inherently handle real numbers.</p>
+<p>I chose M5 partly because Chronos-2 has no training leakage on it, so any zero-shot number be authentic.</p>
+<p>In this post, <strong>out-of-the-box</strong> will mean: no covariates, no fine-tuning, cross-learning off, and default context length. One detail about the model: it reads the last <code>context_length</code> days of a series and <em>silently ignores the rest</em>.</p>
+<p>On daily M5 data the longest history at the validation origin is 1,885 days, shorter than the documented 2,048 default and far shorter than the 8,192 maximum, so every series is read in full. On a finer-grained time grid the same 8,192 steps would be a much shorter span and the default would be quietly truncating most of the history.</p>
 </section>
-<section id="four-prior-checks-made" class="level2">
-<h2 class="anchored" data-anchor-id="four-prior-checks-made">Four prior checks made</h2>
-<p>Each of these can fail silently, and each would invalidate everything downstream:</p>
+<section id="four-prior-checks-i-made" class="level2">
+<h2 class="anchored" data-anchor-id="four-prior-checks-i-made">Four prior checks I made</h2>
 <ol type="1">
-<li><strong>Batching is not sharing.</strong> With cross-learning off, a series forecast alone and the same series inside a batch of 100 must give the same answer.</li>
-<li><strong>The point forecast is the median.</strong> The library names the column <code>predictions</code> and computes it in a variable misleadingly called <code>mean</code>.</li>
-<li><strong>The context length changes nothing yet.</strong> Forecasting at the 2,048 default must equal forecasting at the model maximum, since no history is that long.</li>
-<li><strong>Quantiles ordered, no missing values.</strong> No missing values — but <strong>19.1% of rows have at least one crossing quantile pair.</strong> That is the model’s own output, not a bug in the harness, and it is worth knowing before reading any interval as an interval.</li>
+<li><strong>Batching is not sharing.</strong> With cross-learning off, a series forecast alone and the same series inside a batch of 100 gives the same answer.</li>
+<li><strong>The point forecast is the median.</strong> The library names the column <code>predictions</code> and computes it in a variable misleadingly called <code>mean</code>, whilst in truth it corresponds to the <code>median</code>.</li>
+<li><strong>The context length changes nothing yet.</strong> Forecasting at the 2,048 default equals forecasting at the model maximum, since no history is that long.</li>
+<li><strong>Quantiles ordered, no missing values.</strong> No missing values — but 19.1% of rows have at least one crossing quantile pair. It is worth knowing before reading any interval as… an interval.</li>
 </ol>
 </section>
 <section id="zero-shot" class="level2">
@@ -3431,8 +3431,9 @@ Figure&nbsp;1: Validation window, by horizon bucket. Baselines in grey.
 </div>
 </div>
 </div>
-<p><strong>MAE and WMAPE drop by 10.3% against XGBoost, with no features at all.</strong> The engineering the gradient-boosted baseline needs — lags, rolling windows, per-weekday moments at three aggregation levels — is handmade, and therefore crude: reality does not line up with it that neatly. Chronos-2 works from a far richer representation, and it was never shown this kind of series while it was being built. That is the part I find impressive.</p>
-<p>Two honest deductions from that headline. Part of the 10.3% is the median-versus-mean advantage named at the end of the previous post: XGBoost is trained on squared error and estimates a conditional mean, and on absolute-error metrics the median is the better point forecast regardless of which model is the better forecaster. And <strong>P90 goes the other way</strong>: Chronos-2 is 3.8% <em>worse</em> than XGBoost on the bad days. On the error you would actually staff for, the feature-engineered model is ahead.</p>
+<p>Figure 1 shows the performances side by side of the out-of-the-box Chronos2 and the previously studied models.</p>
+<p>The verdict is very clear: <strong>MAE and WMAPE drop by 10.3% against XGBoost, despite no specific features at all.</strong> This forces us to conclude that, at least empirically in this case, the engineering the gradient-boosted baseline needs — lags, rolling windows, per-weekday moments at three aggregation levels, etc — is handmade, and therefore too <em>“crude”</em>: reality doesn’t cleanly align with the dichotomies we create. On the contrary, Chronos-2’s training allowed it to build a much more subtle and complex net of operations, which we already knew excelled on problems it was optimized on. However here it had <strong>never seen this dataset</strong> before, and it is one we could describe as very “unusual”. The performances it just showed are that much more impressive.</p>
+<p>We already justified at the end of the previous post that part of the 10.3% is the median-versus-mean advantage: XGBoost is trained on squared error and estimates a conditional mean, and on absolute-error metrics the median is the better point forecast regardless of which model is the better forecaster. Also <strong>P90 goes the other way</strong>: Chronos-2 is 3.8% <em>worse</em> than XGBoost on the bad days. According to a company’s priorities, there could still be a debate on which model to use.</p>
 <div id="cell-fig-vanilla-index" class="cell" data-execution_count="4">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -3546,12 +3547,14 @@ Figure&nbsp;2: Per-series WMAPE, Chronos-2 against XGBoost, series ordered by vo
 </div>
 </div>
 </div>
-<p>Chronos-2 has the lower WMAPE on 75% of series — unlike the baseline’s win in the previous post, this one is not carried by the high-volume items alone.</p>
+<p>But Figure 2 is once again to Chronos-2’s advantage: it has the lower WMAPE on 75% of series — and unlike the baseline’s win in the previous post, this one is <strong>not exclusively carried by the high-volume items</strong>. We can observe in the graph a fair match at the low-volume items, and a quick margin for Chronos2 as the volume goes up.</p>
 </section>
 <section id="four-reasonable-but-inadequate-ideas" class="level2">
 <h2 class="anchored" data-anchor-id="four-reasonable-but-inadequate-ideas">Four reasonable but inadequate ideas</h2>
-<p>Every gain of the gradient-boosted baseline came from handing it information. Chronos-2 accepts extra inputs too, so the obvious next move is to hand it the same knowledge. The question is not rhetorical. Anything derived from the target’s own past <em>should</em> be redundant to a model that reads the history. But prices, SNAP days and events are genuinely exogenous and cannot be inferred from sales alone — and neither can the calendar, since Chronos-2 reads only the target values and so has no way of knowing whether a given day is Christmas or just another Monday.</p>
-<p>I tried four families, all on the validation window, all against zero-shot:</p>
+<p>Now that we saw the out-of-the-box performances, the natural follow-up question is: <strong><em>how can we make it better?</em></strong></p>
+<p>Every now gain for the gradient-boosted baseline came from handing it new metadata or information. Chronos-2 accepts extra inputs too, so the obvious move is to hand it similar new knowledge.</p>
+<p>This idea isn’t unreasonable. Anything derived from the target’s own past <em>should</em> be redundant to a model that reads the history, but prices, SNAP days and events are genuinely exogenous and cannot be inferred from sales alone. Neither can the calendar be inferred: since Chronos-2 reads only the target values, it has no way of knowing whether a given day is Christmas or just another Monday. If it was reading many years of history, the model would pick up on recurrent special dates, but shifting ones (take Black Friday for example) will be impossible to pinpoint…</p>
+<p>I tried four families of such metadata, and tested the models against the zero-shot one. I also experimented on three different ways to marker-sales days, so the model would get better on low-volume items. Finally, I compared activating cross-learning to the default model:</p>
 <div id="cell-fig-attempts" class="cell" data-execution_count="6">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -3620,28 +3623,27 @@ Figure&nbsp;3: The same table as bars. Left of zero: better than zero-shot.
 </div>
 </div>
 </div>
-<p>Read the table block by block.</p>
+<p>Let’s run over the results of Figure 3 block by block:</p>
 <p><strong>Known covariates, one block at a time, all lose.</strong> Calendar costs 0.36% of WMAPE, price 0.47%, SNAP and events 0.16%. Weekday and month are the clearest case of redundancy — they are recoverable from the timestamps the model already has — but price and SNAP are not, and they lose anyway. Only <em>all four blocks together</em> helps, by 0.54%, which is small enough that a single validation window of 473 series cannot distinguish it from luck.</p>
-<p><strong>Cross-learning is the worst single idea tried</strong> on the headline metrics: +0.85% WMAPE and +1.12% WQL. Letting the series of a batch attend to each other should help a thin series borrow from its neighbours; on this data it hurts. One design note that makes the result about the mechanism rather than about a grouping: the series are sorted by id, so consecutive batches would be nearly single-department, and the order is randomised with a fixed seed before batching.</p>
-<p><strong>RQL disagrees, and sharply</strong>: -5.61%, a clear improvement on the one loss that encodes what I actually want — over-prediction priced at four times under-prediction, scored on the point forecast. That is worth stating rather than burying, but not worth over-reading. RQL falls whenever a forecast moves <em>down</em>, whether or not the move is justified, and cross-learning is also the run whose 20–80% band narrows most (next section). Narrower is not the same quantity as lower, so this is a flag, not an explanation: the run that loses hardest on symmetric error is the one that wins on the asymmetric one.</p>
-<p><strong>Every encoding of the long zero runs loses too.</strong> About 27% of history days sit inside a run of at least 14 consecutive zero-sale days while the item is on sale. Three ways to point them out: a past-only 0/1 covariate, a second multivariate target, and replacing the values with NaN so the model treats them as unobserved. The first two land at −0.08% WMAPE and +0.10% WQL; masking is the worst result in the study at +2.32% WMAPE and +1.99% WQL.</p>
-<p>One trap I had to close before any of that could be measured: the saved flags were computed on the whole dataset, so a zero run straddling the origin was partly defined by days the model must not see.</p>
-<p>If there is a single <strong>takeaway</strong> from these eight runs, it is that with a foundation model <strong>feature engineering harms predictive power</strong>: it brute-forces a crude characterisation onto far subtler machinery. That is the opposite of an algorithm like XGBoost, where <strong>the more the better</strong>, because it simply never uses poor metadata — gain optimisation being the greedy backbone of its decision trees.</p>
+<p><strong>Cross-learning is the worst single idea tried</strong> on the headline metrics: +0.85% WMAPE and +1.12% WQL. Letting the series of a batch attend to each other should help a thin series borrow from its neighbours; surprisingly, on this data it hurts.</p>
+<p><strong>RQL disagrees, and sharply</strong>: -5.61%, a clear improvement this loss function — over-prediction priced at four times under-prediction, scored on the point forecast. Though lack of improvement on other metrics Suggest that the forecast moved <em>down</em> in unjustified cases.</p>
+<p><strong>Every encoding of the long zero runs loses too.</strong> About 27% of history days sit inside a run of at least 14 consecutive zero-sale days while the item is on sale. I used three ways to point them out: a <em>past-only binary covariate</em> (one/off), a <em>second multivariate target</em>, and <em>replacing the values with NaN</em> so the model treats them as unobserved. The first two land at −0.08% WMAPE and +0.10% WQL; masking is the worst result in the study at +2.32% WMAPE and +1.99% WQL.</p>
+<p>These eight runs unfortunately converge towards the same conclusion: with a foundation model <strong>feature engineering harms predictive power</strong>. It brute-forces a crude characterization onto a far subtler machinery. That is the opposite of an algorithm like XGBoost, where <strong>the more the better</strong>, because it simply never uses bad metadata, since gain optimisation is a greedy Way of building its decision trees.</p>
 <section id="what-about-uncertainty" class="level3">
 <h3 class="anchored" data-anchor-id="what-about-uncertainty">What about uncertainty?</h3>
 <p>I also recorded the mean width of every run’s 20–80% band, on the theory that <em>an input the model cannot turn into a rule makes it less sure before it makes it worse</em>. A widening would be the signature of a useless input.</p>
-<p>That is not what happened. 7 of the 8 attempts came back <strong>narrower</strong> than zero-shot while scoring worse — cross-learning narrowest of all, at -3.66%. The expected failure mode was hedging; the actual failure mode is <strong>confidence that is not earned</strong>. Only NaN-masking widened, by 11.3%, and it is also the one whose point forecast degraded most, which is at least self-consistent: told that a quarter of the history is unobserved, the model both loses the information and admits it.</p>
+<p>That is not what happened. 7 of the 8 attempts came back <strong>narrower</strong> than zero-shot while scoring worse — cross-learning narrowest of all, at -3.66%. The expected failure mode was hedging; the actual failure mode is <strong>confidence that is not earned</strong>. Only NaN-masking widened, by 11.3%, and it is also the one whose point forecast degraded most, which is at least self-consistent: when told that a quarter of the history is unobserved, the model <strong>both loses the information and admits it</strong>.</p>
 </section>
 <section id="are-the-long-zero-runs-predictable-at-all" class="level3">
 <h3 class="anchored" data-anchor-id="are-the-long-zero-runs-predictable-at-all">Are the long zero runs predictable at all?</h3>
-<p>Before building anything on top of a forecast of them — a two-stage model, say — it is worth asking whether they can be forecast at all. The second of those three encodings makes that easy to ask, once one thing about the model is said plainly.</p>
-<p>Chronos-2 can forecast several related series jointly. So instead of asking it for sales alone, that run asked it for <strong>two channels per item</strong>:</p>
+<p>Before building anything on top of a forecast of zero-sales periods (a type of two-stage model) it is worth asking whether they can be forecast at all.</p>
+<p>Chronos-2 can forecast several related series jointly. So instead of configuring it for sales alone, I ran it for <strong>two channels per item</strong>:</p>
 <ul>
 <li><strong>sales</strong>, in units — the thing actually being forecast;</li>
-<li><strong><code>is_blank</code></strong>, a 0/1 flag — <em>is this day inside a long zero run?</em></li>
+<li><strong><code>is_blank</code></strong>, a 0/1 binary flag signaling of this day is inside a long zero run (<em>more than 14 days</em>)</li>
 </ul>
 <p>It returns a forecast of both for every day of the window. That gives two things to check: whether the blank channel is any good by itself, and whether it pushes the sales channel in the right direction.</p>
-<p><strong>By itself, it is not good.</strong> Over the validation window, 2,000 of 13,244 scored (series, day) pairs sit inside a real zero run:</p>
+<p><strong>By itself, it isn’t good.</strong> Here I calculated the <code>precision</code>, defined as the share of real blank days amongst the blank days predicted, and the <code>recall</code>, defined as the share of real blank days captured by the prediction. Over the validation window, 2,000 of 13,244 scored (series, day) pairs sit inside a real zero run. Let’s look at how the zero-shot model and the multivariate one perform on this task:</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
@@ -3672,7 +3674,7 @@ Figure&nbsp;3: The same table as bars. Left of zero: better than zero-shot.
 <li><strong>without the blank channel</strong> — Chronos-2 given the sales history and nothing else, which is the zero-shot run everything in this post is measured against;</li>
 <li><strong>with it</strong> — the same model, the same history, plus the blank-run channel alongside.</li>
 </ul>
-<p>Keep only the days where the run’s own blank channel predicts a zero run, and every point should fall below the diagonal.</p>
+<p>Keep only the days where the run’s own blank channel predicts a zero run, and every point <em>should</em> fall below the diagonal.</p>
 <div id="cell-fig-coupling" class="cell" data-execution_count="7">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -3949,13 +3951,13 @@ Figure&nbsp;4: Two sales forecasts of the same item on the same day, from two ru
 </div>
 </div>
 </div>
-<p>They do not. On 35% of those 1,483 days, knowing about the zero run made the model forecast <strong>more</strong> sales, not fewer. It is asserting <em>“a long zero run is likely here”</em> and <em>“I now expect higher sales here than I would have without that knowledge”</em> at the same time. The two channels are barely coupled, so the multivariate framing is not merely unhelpful: a third of the times it fires, it contradicts itself.</p>
+<p>They do not. On 35% of those 1,483 days, knowing about the zero run made the model forecast <strong>more</strong> sales, not fewer. It is asserting <em>“a long zero run is likely here”</em> and <em>“I now expect higher sales here than I would have without that knowledge”</em> at the same time. Therefore <strong>the two channels are barely coupled</strong>, so the multivariate framing has no future.</p>
 </section>
 </section>
-<section id="context-length-the-one-knob-that-matters-swept-46-ways" class="level2">
-<h2 class="anchored" data-anchor-id="context-length-the-one-knob-that-matters-swept-46-ways">Context length: the one knob that matters, swept 46 ways</h2>
-<p>The context length is the single setting that decides how much history the model sees. More is not automatically better: a long context can dilute the recent behaviour that drives the next few days, while the far horizon may need more of the past. And because the far horizon and the near horizon may want different answers, the sweep is scored <strong>by horizon segment</strong>, not overall.</p>
-<p>I fixed the decision rule before looking: for days 1–7 and for days 8–28 separately, keep the context with the lowest WQL. If the two differ, <em>stitch</em> — days 1–7 from one, days 8–28 from the other — with the boundary at the edge of the first horizon bucket rather than at a tuned value.</p>
+<section id="context-length-the-knob-that-matters" class="level2">
+<h2 class="anchored" data-anchor-id="context-length-the-knob-that-matters">Context length: the knob that matters</h2>
+<p>The context length is the single setting that decides how much history the model sees. <strong>More is not automatically better:</strong> a long context can dilute the recent behavior that drives the next few days, while the far horizon may need more of the past. And because the far horizon and the near horizon may want different answers, the sweep is scored <strong>by horizon segment</strong>, not overall.</p>
+<p>The decision rule I chose is the following: for days 1–7 and for days 8–28 separately, keep the context with the lowest WQL. If the two differ, <em>stitch</em> — days 1–7 from one, days 8–28 from the other — with the boundary at the edge of the first horizon bucket rather than at a tuned value.</p>
 <div id="cell-fig-sweep" class="cell" data-execution_count="8">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -4166,7 +4168,7 @@ Figure&nbsp;5: WQL against context length, per horizon segment, relative to read
 </div>
 </div>
 </div>
-<p>The shape of that curve is the finding. Below roughly 150 days the model is badly starved and the error rises steeply; above a few hundred it is <strong>flat to within a fraction of a percent</strong>. The best length is 1,099 days for the first week and 1,829 for days 8–28 — but neither is a point, it is a plateau: 33 and 31 lengths score within 1% of those winners.</p>
+<p>The shape of Figure 5’s curve gives us the optimum. Below roughly 150 days the model is badly starved and the error rises steeply; above a few hundred it is <strong>flat to within a fraction of a percent</strong>. The best length is 1,099 days for the first week and 1,829 for days 8–28 — but neither is a point, it is a <strong>plateau</strong>: 33 and 31 lengths score within 1% of those winners.</p>
 <p>Two more things say the same. The same selection rule run on WMAPE instead of WQL picks 1,288 for the early segment rather than 1,099 — the same flat region, a different point in it. And a CPU run and a GPU run of the sweep disagreed on the coarse-grid winner, yet still selected the same final pair.</p>
 <div class="cell" data-execution_count="10">
 <details class="code-fold">
@@ -4350,7 +4352,7 @@ Table&nbsp;2: The stitch against reading the whole history, validation window.
 </figure>
 </div>
 </div>
-<p>So: a 46-length sweep, a selection rule fixed in advance, a stitch across two regimes — and the whole exercise removes <strong>0.11% of WMAPE and 0.08% of WQL.</strong> Reading the entire history, which is what the model does if you tell it nothing, is within a tenth of a percent of the best configuration available. Remember, though, that in this setting no series was longer than 2,000 days, which is far from the maximum capacity of Chronos-2: on a different model, or with more history, the relationship between performance and context length could be <strong>non-monotonic</strong>.</p>
+<p>So: a 46-length sweep, a selection rule fixed in advance, a stitch across two regimes — and the whole process removed <strong>0.11% of WMAPE and 0.08% of WQL.</strong> Reading the entire history, which is what the model does if you tell it nothing, is within a tenth of a percent of the best configuration available. Remember, though, that in this setting no series was longer than 2,000 days, which is far from the maximum capacity of Chronos-2: on a different model, or with more history, the relationship between performance and context length could be strikingly <strong>non-monotonic</strong>.</p>
 </section>
 <section id="lora-for-finetuning" class="level2">
 <h2 class="anchored" data-anchor-id="lora-for-finetuning">LoRA for finetuning</h2>
@@ -4686,7 +4688,7 @@ Figure&nbsp;6: How one fine-tune is laid out around its forecast origin. The his
 </div>
 </div>
 <p>The test-origin model is a fresh fine-tune with the same configuration on the longer history, exactly as the baseline was retrained per window.</p>
-<p>Nothing forces a model to forecast at the context length it was tuned at, so I tried all four pairings.</p>
+<p>Nothing else than intuition forces a model to <em>forecast at the context length it was tuned at</em>, so I tried all four pairings.</p>
 <div class="cell" data-execution_count="12">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -4876,12 +4878,11 @@ Table&nbsp;3: Validation WQL per segment. Lower is better; the two winners are t
 </figure>
 </div>
 </div>
-<p>Per-segment winners: <strong>fine-tuned at 1,099 and forecasting at 1,099 for days 1–7, fine-tuned at 1,099 and forecasting at 1,829 for days 8–28.</strong> The long segment is a <em>cross</em> pairing — tuned at one length, predicting at another — which training and predicting at a single length would never have surfaced. It is also the kind of result that is easy to over-read: the gap between it and the next configuration is in the fourth decimal of WQL.</p>
-<p>The cost is worth recording. On my laptop CPU this measured 21.7 s per training step and 126 s per evaluation pass: 6.4 hours per fine-tune, up to 25.5 hours for the whole plan. The same work on a GTX 1080 took about 32 minutes per run. Every number in this section that I compare with another was produced on the same device, because CPU and GPU disagree in the third decimal of WQL — enough to invert a ranking this tight.</p>
+<p>Per-segment winners: <strong>fine-tuned at 1,099 and forecasting at 1,099 for days 1–7, fine-tuned at 1,099 and forecasting at 1,829 for days 8–28.</strong> So *cross pairing** between the fine-tuning context length and the one for predicting turns out helpful! However the margins are very small, and the gap between it and the next best configuration is in the fourth decimal of WQL.</p>
 </section>
 <section id="the-one-measurement-on-the-test-window" class="level2">
 <h2 class="anchored" data-anchor-id="the-one-measurement-on-the-test-window">The one measurement on the test window</h2>
-<p>I used the test window for no decision anywhere in this post.</p>
+<p>Once again, it is good to note that I didn’t use the test window for decision anywhere in this post. What did we gain from all this refining work?</p>
 <div class="cell" data-execution_count="13">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -5297,8 +5298,8 @@ Figure&nbsp;8: Four test-window series at the 98th, 75th, 50th and 25th percenti
 </section>
 <section id="what-this-adds-up-to" class="level2">
 <h2 class="anchored" data-anchor-id="what-this-adds-up-to">What this adds up to</h2>
-<p>Out of the box, on data it had never seen, Chronos-2 beat a reproduced top-4% feature pipeline by 8.3% of WMAPE. Then: four families of extra information, a 46-length sweep of its most important setting, a stitch across horizon segments and a LoRA fine-tune — and the combined effect of all of it is <strong>a fraction of a percent, in the wrong direction on the point forecast.</strong> These results really highlight the power of the model’s architecture — it isn’t even a heavy-duty product with its 120M parameters, compared to GPT-3’s <strong>175B parameters</strong>: and that was in 2020!</p>
-<p>The flat part of that story is not a failure of effort. Every configuration I tried lands in the same narrow band, which is what a ceiling looks like from the inside. The honest next question is not “which knob did I miss” but <strong>“is this a limit of the tuning, or of the problem?”</strong> — and that one is answerable, which is what <a href="../03-ceiling/">the third post</a> does. It also weighs the one lever I never pulled: <strong>treat different series differently</strong> — fine-tune per group, cross-learn inside a group, one model per group. The possibilities there are endless, which is exactly why the question deserves an answer before any of them is built.</p>
+<p>Out of the box, on data it had never seen, Chronos-2 beat a reproduced top-4% feature pipeline by 8.3% of WMAPE. Then the combined effect of greedy optimization on every axes yields <strong>a fraction of a percent, in the wrong direction on the point forecast.</strong> These results really highlight the power of the model’s architecture. It isn’t even a heavy-duty model with only 120M parameters, to be compared to GPT-3’s <strong>175B parameters</strong>: and that was in 2020! However the posts also reveal a transformer’s shortcomings: past the out-of-the-box performances, only very meager gains can be made, if not none at all.</p>
+<p>The flat part of that story is not a failure of effort. Every configuration I tried lands in the same narrow band, which is what a <strong>ceiling</strong> looks like from the inside. The honest next question is not “which knob did I miss” but <strong>“is this a limit of the tuning, or of the problem?”</strong> — and that one is answerable, which is what <a href="../03-ceiling/">the third post</a> does. It also weighs the one lever I never pulled: <strong>treat different series differently</strong> — fine-tune per group, cross-learn inside a group, one model per group. The possibilities there are endless, which is exactly why the question deserves an answer and some guidance instead of blindly testing as many models as our machines can take on.</p>
 
 
 <!-- -->
