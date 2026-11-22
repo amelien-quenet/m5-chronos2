@@ -1,0 +1,596 @@
+---
+title: "Chronos-2, knob by knob"
+description: "The zero-shot predictions beat the baseline by 8% out of the box. Then any customization struggles to improve predictions."
+order: 2
+date: "2026-11-01"
+categories: [M5, Chronos-2, foundation models, fine-tuning]
+draft: false
+---
+
+```{python}
+#| echo: false
+import sys; sys.path.insert(0, ".")
+from _study import (ARTIFACTS, ROSTER, TRUTH, EVAL_ROSTER, VALIDATION_ORIGIN, TEST_ORIGIN,
+                    scored, table_of, rename_models, read_json, md, metrics, plots, pl)
+import matplotlib.pyplot as plt
+import numpy as np
+from datetime import timedelta
+
+EXPERIMENTS = ARTIFACTS / "experiments"
+VAL_ROSTER = EVAL_ROSTER.filter(pl.col("role") == "validation")
+
+def experiment(name):
+    """One saved run from artifacts/experiments/."""
+    return pl.read_parquet(EXPERIMENTS / f"{name}_{ROSTER}.parquet")
+
+def on_validation(predictions):
+    return metrics.join_truth(predictions, TRUTH, VAL_ROSTER)
+```
+
+[The previous post](../01-xgboost/) left me a number to beat: WMAPE 78.8 on the validation
+window. Intros post I hand Chronos-2 the sales history and **nothing else.**
+
+## What the model is
+
+Chronos-2 is a **pre-trained T5-style encoder for forecasting of about 120M parameters**. It cuts
+the history into patches of 16 days, embeds each as a vector, and emits the quantiles of the
+*whole* horizon in a **single forward pass** — no token vocabulary, no step-by-step decoding,
+and the horizon length is an input, contrary to an LLM application of the same architecture. The 
+derived point forecast for the study is **the median**.
+
+The original project behind Chronos-2 (created by an Amazon research team) was to **train an LLM to understand the
+"language" of time series**, and thus generate the most probable future. 
+But building a finite vocabulary for real numbers turned out to be
+inefficient for out-of-the-box applications, which led the team to strip both the first and the last layer of the
+architecture to keep only the calculus layers in between - which inherently handle real numbers.
+
+I chose M5 partly because Chronos-2 has no training leakage on it, so any zero-shot number be authentic.
+
+In this post, **out-of-the-box** will mean: no covariates, no fine-tuning, cross-learning off, and default context
+length. One detail about the model: it reads the last `context_length` days of a series and *silently ignores the rest*.
+
+On daily M5 data the longest history at the validation origin is 1,885 days, shorter than
+the documented 2,048 default and far shorter than the 8,192 maximum, so every series is read
+in full. On a finer-grained time grid the same 8,192 steps would be a much shorter span and the
+default would be quietly truncating most of the history.
+
+## Four prior checks I made
+
+1. **Batching is not sharing.** With cross-learning off, a series forecast alone and the
+   same series inside a batch of 100 gives the same answer.
+2. **The point forecast is the median.** The library names the column `predictions` and
+   computes it in a variable misleadingly called `mean`, whilst in truth it corresponds to the `median`.
+3. **The context length changes nothing yet.** Forecasting at the 2,048 default equals
+   forecasting at the model maximum, since no history is that long.
+4. **Quantiles ordered, no missing values.** No missing values — but 19.1% of rows have at
+   least one crossing quantile pair. It is worth knowing before reading any interval as... an interval.
+
+## Zero-shot
+
+```{python}
+#| label: tbl-vanilla
+#| tbl-cap: "Validation window. Chronos-2 with no covariates, no fine-tuning, cross-learning off."
+#| code-fold: true
+models = ["zero", "seasonal_naive", "moving_average_28d",
+          "xgboost_btrotta", "chronos2_vanilla"]
+md(rename_models(table_of(models, "validation"))
+   .select(["model", "n_series"] + metrics.METRICS).sort("WMAPE"))
+```
+
+```{python}
+#| label: fig-vanilla-buckets
+#| fig-cap: "Validation window, by horizon bucket. Baselines in grey."
+#| code-fold: true
+fig, axes = plots.plot_by_bucket(table_of(models, "validation", by="horizon_bucket"),
+                                 metrics.METRICS)
+plt.show()
+```
+
+Figure 1 shows the performances side by side of the out-of-the-box Chronos2 and the previously studied models.
+
+The verdict is very clear: **MAE and WMAPE drop by 10.3% against XGBoost, despite no specific
+features at all.** This forces us to conclude that, at least empirically in this case, the engineering the
+gradient-boosted baseline needs — lags, rolling windows, per-weekday moments at three
+aggregation levels, etc — is handmade, and therefore too *"crude"*: reality doesn't cleanly align with the dichotomies 
+we create. 
+On the contrary, Chronos-2's training allowed it to build a much more subtle and complex net of operations, which we already 
+knew excelled on problems it was optimized on. However here it had **never seen this dataset** before, and it is one we could describe as
+very "unusual". The performances it just showed are that much more impressive.
+
+We already justified at the end of the previous post that part of the 10.3% is the median-versus-mean
+advantage: XGBoost is trained on squared error and
+estimates a conditional mean, and on absolute-error metrics the median is the better point
+forecast regardless of which model is the better forecaster. Also **P90 goes the other way**:
+Chronos-2 is 3.8% *worse* than XGBoost on the bad days. According to a company's priorities, there could still 
+be a debate on which model to use.
+
+```{python}
+#| label: fig-vanilla-index
+#| fig-cap: "Per-series WMAPE, Chronos-2 against XGBoost, series ordered by volume. Point forecast against point forecast."
+#| code-fold: true
+def per_series(model, metric, role="validation"):
+    return metrics.score(scored(model, role), by="id").select(
+        "id", pl.col(metric).alias(f"{metric}_{model}"))
+
+volume = (scored("chronos2_vanilla", "validation")
+          .group_by("id").agg(pl.col("y").sum().alias("volume")))
+comparison = (per_series("xgboost_btrotta", "WMAPE")
+              .join(per_series("chronos2_vanilla", "WMAPE"), on="id")
+              .join(volume, on="id"))
+
+fig, ax = plt.subplots(figsize=(11, 3.5))
+share = plots.index_plot(ax, comparison, "WMAPE",
+                         "xgboost_btrotta", "chronos2_vanilla", order_by="volume")
+plt.show()
+```
+
+But Figure 2 is once again to Chronos-2's advantage: it has the lower WMAPE on `{python} f"{share:.0%}"` of 
+series — and unlike the baseline's win in the previous post, this one is **not exclusively carried by the high-volume items**. 
+We can observe in the graph a fair match at the low-volume items, and a quick margin for Chronos2 as the volume goes up.
+
+## Four reasonable but inadequate ideas
+
+Now that we saw the out-of-the-box performances, the natural follow-up question is: ***how can we make it better?*** 
+
+Every now gain for the gradient-boosted baseline came from handing it new metadata or information. Chronos-2
+accepts extra inputs too, so the obvious move is to hand it similar new knowledge.
+
+This idea isn't unreasonable. Anything derived from the target's own past *should* be redundant
+to a model that reads the history, but prices, SNAP days and events are genuinely exogenous
+and cannot be inferred from sales alone. Neither can the calendar be inferred: since Chronos-2 reads
+only the target values, it has no way of knowing whether a given day is Christmas or just
+another Monday. If it was reading many years of history, the model would pick up on recurrent special dates,
+ but shifting ones (take Black Friday for example) will be impossible to pinpoint...
+
+I tried four families of such metadata, and tested the models against the zero-shot one. I also experimented 
+on three different ways to marker-sales days, so the model would get better on low-volume items. Finally, I compared 
+activating cross-learning to the default model:
+
+```{python}
+#| echo: false
+attempt_files = {
+    "calendar": "known_calendar",
+    "price": "known_price",
+    "SNAP + events": "known_snap_events",
+    "all known covariates": "known_all_known",
+    "cross-learning": "cross_learning",
+    "blanks: past covariate": "blank_past_covariate",
+    "blanks: second target": "blank_second_target_both_channels",
+    "blanks: NaN-masked": "blank_nan_mask",
+}
+runs = {"zero-shot": scored("chronos2_vanilla", "validation")}
+for label, filename in attempt_files.items():
+    table = experiment(filename)
+    if "target_name" in table.columns:          # the multivariate run saves both channels
+        table = table.filter(pl.col("target_name") == "sales").drop("target_name")
+    runs[label] = on_validation(table)
+
+changes = metrics.compare(runs, reference="zero-shot")
+widths = pl.DataFrame({
+    "model": list(runs),
+    "width": [t.select((pl.col("q0.8") - pl.col("q0.2")).mean()).item() for t in runs.values()],
+})
+reference_width = widths.filter(pl.col("model") == "zero-shot")["width"][0]
+widths = widths.with_columns(
+    (100 * (pl.col("width") / reference_width - 1)).alias("width_change_%"))
+
+band = widths.filter(pl.col("model") != "zero-shot").sort("width_change_%")
+n_narrower = band.filter(pl.col("width_change_%") < 0).height
+narrowest, widest = band.row(0, named=True), band.row(-1, named=True)
+
+def change(model, metric):
+    """One attempt's change against zero-shot, in %, read from the table above.
+
+    Every figure quoted in the prose below goes through here rather than being typed
+    in. RQL in particular was redefined on 2026-11-07 - the 0.2 asymmetry now prices
+    the point forecast rather than the q0.2 column - and a hard-coded RQL number
+    survived that change by several days without looking wrong.
+    """
+    return changes.filter(pl.col("model") == model)[f"{metric}_change_%"][0]
+```
+
+```{python}
+#| label: fig-attempts
+#| fig-cap: "The same table as bars. Left of zero: better than zero-shot."
+#| code-fold: true
+attempts = changes.filter(pl.col("model") != "zero-shot")
+fig, axes = plt.subplots(1, 2, figsize=(12, 0.45 * attempts.height + 1.2), sharey=True)
+plots.plot_change_bars(axes[0], attempts, "WQL")
+plots.plot_change_bars(axes[1], attempts, "WMAPE")
+axes[1].set_ylabel("")
+fig.tight_layout()
+plt.show()
+```
+
+Let's run over the results of Figure 3 block by block:
+
+**Known covariates, one block at a time, all lose.** Calendar costs 0.36% of WMAPE, price
+0.47%, SNAP and events 0.16%. Weekday and month are the clearest case of redundancy — they
+are recoverable from the timestamps the model already has — but price and SNAP are not, and
+they lose anyway. Only *all four blocks together* helps, by 0.54%, which is small enough
+that a single validation window of 473 series cannot distinguish it from luck.
+
+**Cross-learning is the worst single idea tried** on the headline metrics:
+`{python} f"{change('cross-learning', 'WMAPE'):+.2f}"`% WMAPE and
+`{python} f"{change('cross-learning', 'WQL'):+.2f}"`% WQL.
+Letting the series of a batch attend to each other should help a thin series borrow from its
+neighbours; surprisingly, on this data it hurts.
+
+**RQL disagrees, and sharply**: `{python} f"{change('cross-learning', 'RQL'):+.2f}"`%, a clear
+improvement this loss function — over-prediction priced at four
+times under-prediction, scored on the point forecast. Though lack of improvement on other metrics
+Suggest that the forecast moved *down* in unjustified cases.
+
+**Every encoding of the long zero runs loses too.** About 27% of history days sit inside a
+run of at least 14 consecutive zero-sale days while the item is on sale. I used three ways to point
+them out: a *past-only binary covariate* (one/off), a *second multivariate target*, and *replacing the values
+with NaN* so the model treats them as unobserved. The first two land at −0.08% WMAPE and
++0.10% WQL; masking is the worst result in the study at +2.32% WMAPE and +1.99% WQL.
+
+These eight runs unfortunately converge towards the same conclusion: with a foundation model
+**feature engineering harms predictive power**. It brute-forces a crude characterization onto a 
+far subtler machinery. That is the opposite of an algorithm like XGBoost, where **the more the
+better**, because it simply never uses bad metadata, since gain optimisation is a greedy
+Way of building its decision trees.
+
+### What about uncertainty?
+
+I also recorded the mean width of every run's 20–80% band, on the theory that *an input the
+model cannot turn into a rule makes it less sure before it makes it worse*. A widening would
+be the signature of a useless input.
+
+That is not what happened. `{python} f"{n_narrower}"` of the `{python} f"{band.height}"`
+attempts came back **narrower** than zero-shot while scoring worse — cross-learning narrowest
+of all, at `{python} f"{narrowest['width_change_%']:.2f}"`%. The expected failure mode was
+hedging; the actual failure mode is **confidence that is not earned**. Only NaN-masking
+widened, by `{python} f"{widest['width_change_%']:.1f}"`%, and it is also the one whose point
+forecast degraded most, which is at least self-consistent: when told that a quarter of the history
+is unobserved, the model **both loses the information and admits it**.
+
+### Are the long zero runs predictable at all?
+
+Before building anything on top of a forecast of zero-sales periods (a type of two-stage model) it is worth
+asking whether they can be forecast at all.
+
+Chronos-2 can forecast several related series jointly. So instead of configuring it for sales
+alone, I ran it for **two channels per item**:
+
+- **sales**, in units — the thing actually being forecast;
+- **`is_blank`**, a 0/1 binary flag signaling of this day is inside a long zero run (*more than 14 days*)
+
+It returns a forecast of both for every day of the window. That gives two things to check:
+whether the blank channel is any good by itself, and whether it pushes the sales channel in
+the right direction.
+
+**By itself, it isn't good.** Here I calculated the `precision`, defined as the share of real blank
+ days amongst the blank days predicted, and the `recall`, defined as the share of real blank days captured by 
+the prediction. Over the validation window, 2,000 of 13,244 scored
+(series, day) pairs sit inside a real zero run. Let's look at how the zero-shot model and the multivariate one perform on this task:
+
+| source | days flagged | precision | recall |
+|---|---|---|---|
+| the `is_blank` channel, median ≥ 0.5 | 1,483 | 0.55 | 0.41 |
+| read off the zero-shot sales forecast | 8,696 | 0.22 | 0.96 |
+
+Neither is usable: the channel misses three fifths of the runs it should catch, and reading
+them off the sales forecast flags so many days that the flag means nothing.
+
+**The deeper problem is the second check.** The extra channel is only worth having if a
+forecast zero run drags the sales forecast **down**. That is directly testable, by comparing
+two sales forecasts of the same item on the same day, from two runs differing in exactly one
+respect:
+
+- **without the blank channel** — Chronos-2 given the sales history and nothing else, which
+  is the zero-shot run everything in this post is measured against;
+- **with it** — the same model, the same history, plus the blank-run channel alongside.
+
+Keep only the days where the run's own blank channel predicts a zero run, and every point
+*should* fall below the diagonal.
+
+```{python}
+#| label: fig-coupling
+#| fig-cap: "Two sales forecasts of the same item on the same day, from two runs differing only in whether Chronos-2 was also given the blank-run channel. Restricted to the days that channel predicts a zero run (median ≥ 0.5). A channel doing its job would put every point below the diagonal."
+#| code-fold: true
+multivariate = experiment("blank_second_target_both_channels")
+blank_median = (multivariate.filter(pl.col("target_name") == "is_blank")
+                .select("id", "origin", "date", pl.col("q0.5").alias("blank_median")))
+vanilla = pl.read_parquet(ARTIFACTS / "predictions" / f"chronos2_vanilla_{ROSTER}.parquet")
+
+coupling = (
+    on_validation(multivariate.filter(pl.col("target_name") == "sales")
+                  .drop("target_name"))
+    .select("id", "origin", "date", pl.col("y_pred").alias("second_target"))
+    .join(blank_median, on=["id", "origin", "date"])
+    .join(on_validation(vanilla).select("id", "origin", "date",
+                                        pl.col("y_pred").alias("zero_shot")),
+          on=["id", "origin", "date"])
+)
+fires = coupling.filter(pl.col("blank_median") >= 0.5)
+x = fires["zero_shot"].to_numpy()
+y = fires["second_target"].to_numpy()
+n_fires = fires.height
+share_above = float((y > x).mean())
+
+fig, ax = plt.subplots(figsize=(6.2, 4.2))
+limit = float(max(x.max(), y.max())) * 1.05
+ax.plot([0, limit], [0, limit], color=plots.TEXT_COLOR, linewidth=1, zorder=3)
+ax.scatter(x[y <= x], y[y <= x], s=9, alpha=0.30, color=plots.MUTED_TEXT_COLOR,
+           edgecolor="none", label="blank channel pulled sales down (as intended)")
+ax.scatter(x[y > x], y[y > x], s=9, alpha=0.45, color=plots.MAIN_COLOR,
+           edgecolor="none", label=f"it pushed them up ({share_above:.0%})")
+ax.set_xlim(0, limit); ax.set_ylim(0, limit)
+ax.set_xlabel("sales forecast WITHOUT the blank channel (units)")
+ax.set_ylabel("sales forecast WITH it (units)")
+ax.legend(fontsize=8, frameon=False, loc="upper left", markerscale=2)
+fig.tight_layout()
+plt.show()
+```
+
+They do not. On `{python} f"{share_above:.0%}"` of those `{python} f"{n_fires:,}"` days,
+knowing about the zero run made the model forecast **more** sales, not fewer. It is asserting
+*"a long zero run is likely here"* and *"I now expect higher sales here than I would have
+without that knowledge"* at the same time. Therefore **the two channels are barely coupled**, so the
+multivariate framing has no future.
+
+## Context length: the knob that matters
+
+The context length is the single setting that decides how much history the model sees. **More
+is not automatically better:** a long context can dilute the recent behavior that drives the
+next few days, while the far horizon may need more of the past. And because the far horizon
+and the near horizon may want different answers, the sweep is scored **by horizon segment**,
+not overall.
+
+The decision rule I chose is the following: for days 1–7 and for days 8–28 separately, keep the
+context with the lowest WQL. If the two differ, *stitch* — days 1–7 from one, days 8–28 from
+the other — with the boundary at the edge of the first horizon bucket rather than at a tuned
+value.
+
+```{python}
+#| label: fig-sweep
+#| fig-cap: "WQL against context length, per horizon segment, relative to reading the whole history. Below zero: better than zero-shot. 46 lengths, log scale."
+#| code-fold: true
+lengths = sorted(
+    int(path.name.split("_")[1])
+    for path in EXPERIMENTS.glob(f"context_*_{ROSTER}.parquet")
+    if path.name.split("_")[1].isdigit() and "origin" not in path.name
+)
+segment = (pl.when(pl.col("horizon") <= 7).then(pl.lit("days 01-07"))
+             .otherwise(pl.lit("days 08-28")).alias("segment"))
+sweep = pl.concat([
+    metrics.score(on_validation(experiment(f"context_{length}")).with_columns(segment),
+                  by="segment").with_columns(pl.lit(length).alias("context_length"))
+    for length in lengths
+])
+
+longest = max(lengths)
+fig, ax = plt.subplots(figsize=(11, 3.5))
+for name, colour in [("days 01-07", plots.MAIN_COLOR), ("days 08-28", plots.TEXT_COLOR)]:
+    part = sweep.filter(pl.col("segment") == name).sort("context_length")
+    reference = part.filter(pl.col("context_length") == longest)["WQL"][0]
+    ax.plot(part["context_length"].to_numpy(),
+            100 * (part["WQL"].to_numpy() / reference - 1),
+            color=colour, marker="o", markersize=4, linewidth=1.5, label=name)
+ax.axhline(0, color=plots.MUTED_TEXT_COLOR, linewidth=1)
+ax.set_xscale("log")
+ax.set_xlabel("context length (days, log scale)")
+ax.set_ylabel("WQL vs whole history (%)")
+ax.legend()
+plt.show()
+```
+
+```{python}
+#| echo: false
+plateaus = {}
+for name in ("days 01-07", "days 08-28"):
+    part = sweep.filter(pl.col("segment") == name)
+    best = part.sort("WQL").row(0, named=True)
+    within = part.filter(pl.col("WQL") <= best["WQL"] * 1.01)["context_length"].sort()
+    plateaus[name] = {"best": best["context_length"], "within": len(within),
+                      "shortest": int(within.min())}
+```
+
+The shape of Figure 5's curve gives us the optimum. Below roughly 150 days the model is badly starved and 
+the error rises steeply; above a few hundred it is **flat to within a fraction of a 
+percent**. The best length is `{python} f"{plateaus['days 01-07']['best']:,}"` days for the 
+first week and `{python} f"{plateaus['days 08-28']['best']:,}"` for days 8–28 — but neither 
+is a point, it is a **plateau**: `{python} f"{plateaus['days 01-07']['within']}"` and 
+`{python} f"{plateaus['days 08-28']['within']}"` lengths score within 1% of those winners.
+
+Two more things say the same. The same selection rule run on WMAPE instead of WQL picks 1,288 
+for the early segment rather than 1,099 — the same flat region, a different point in it. And 
+a CPU run and a GPU run of the sweep disagreed on the coarse-grid winner, yet still selected 
+the same final pair.
+
+```{python}
+#| label: tbl-stitch
+#| tbl-cap: "The stitch against reading the whole history, validation window."
+#| code-fold: true
+choice = read_json("context_choice")
+early, late = choice["early_context"], choice["late_context"]
+from m5_chronos2.chronos2 import stitch
+
+candidates = {
+    "whole history": experiment(f"context_{longest}"),
+    f"best single length ({late})": experiment(f"context_{late}"),
+    f"stitch {early} -> {late}": stitch(experiment(f"context_{early}"),
+                                        experiment(f"context_{late}"),
+                                        choice["early_last_day"]),
+}
+md(metrics.compare({k: on_validation(v) for k, v in candidates.items()},
+                   reference="whole history")
+   .select(["model"] + [f"{m}_change_%" for m in metrics.METRICS]), digits=3)
+```
+
+So: a 46-length sweep, a selection rule fixed in advance, a stitch across two regimes — and 
+the whole process removed **0.11% of WMAPE and 0.08% of WQL.** Reading the entire history, 
+which is what the model does if you tell it nothing, is within a tenth of a percent of the 
+best configuration available. Remember, though, that in this setting no series was longer 
+than 2,000 days, which is far from the maximum capacity of Chronos-2: on a different model, 
+or with more history, the relationship between performance and context length could be strikingly 
+**non-monotonic**.
+
+## LoRA for finetuning
+
+Full fine-tuning would update 120M weights. LoRA (for low rank) freezes them and learns a 
+low-rank correction to the attention matrices and the output layer — a few hundred thousand 
+trainable parameters, which is what makes the run affordable at all. I used rank 8, learning 
+rate 1e-5, 1,000 steps, effective batch 32.
+
+The protocol keeps the fine-tune away from what it is scored on:
+
+```{python}
+#| label: fig-lora-protocol
+#| fig-cap: "How one fine-tune is laid out around its forecast origin. The history band is drawn truncated; in practice it runs back to the start of the series. The best checkpoint by the validation loss is the one kept."
+#| code-fold: true
+SPAN = 200                                  # days of history drawn, for scale only
+window_starts = np.random.default_rng(0).integers(-SPAN, -56, size=6)
+
+fig, ax = plt.subplots(figsize=(11, 2.6))
+for start, end, colour in [(-SPAN, -28, plots.GRID_COLOR),
+                           (-28, 0, plots.MUTED_TEXT_COLOR),
+                           (0, 28, plots.MAIN_COLOR)]:
+    ax.barh(0, end - start, left=start, height=0.5, color=colour, zorder=2)
+
+for row, start in enumerate(window_starts):
+    ax.barh(0.72 + 0.17 * (row % 2), 28, left=start, height=0.13,
+            color=plots.TEXT_COLOR, alpha=0.55, zorder=3)
+ax.text(-SPAN, 1.12, "random 28-day training windows", fontsize=8,
+        color=plots.TEXT_COLOR, va="bottom")
+
+ax.axvline(0, color=plots.TEXT_COLOR, linewidth=1.2, linestyle="--", zorder=4)
+ax.text(0, 1.3, "forecast origin", ha="center", va="bottom", fontsize=9,
+        color=plots.TEXT_COLOR)
+for x, text, colour, align in [
+        (-SPAN / 2 - 14, "history\ntraining windows cut at random from here",
+         plots.TEXT_COLOR, "center"),
+        (-30, "−28 → 0\nvalidation target,\nscored every 100 steps",
+         plots.TEXT_COLOR, "right"),
+        (30, "0 → +28\nthe forecast window,\nnever touched",
+         plots.MAIN_COLOR, "left")]:
+    ax.text(x, -0.38, text, ha=align, va="top", fontsize=8.5, color=colour)
+
+ax.set_xlim(-SPAN - 6, 100)
+ax.set_ylim(-1.5, 1.6)
+ax.set_yticks([])
+ax.set_xticks([-150, -100, -50, -28, 0, 28])
+ax.set_xlabel("days relative to the forecast origin")
+for side in ("left", "right", "top"):
+    ax.spines[side].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
+
+The test-origin model is a fresh fine-tune with the same configuration on the longer history, 
+exactly as the baseline was retrained per window.
+
+Nothing else than intuition forces a model to *forecast at the context length it was tuned at*, so I tried all four
+pairings.
+
+```{python}
+#| label: tbl-lora
+#| tbl-cap: "Validation WQL per segment. Lower is better; the two winners are the configuration carried forward."
+#| code-fold: true
+def lora(finetune_context, predict_context, origin):
+    name = (f"lora_ctx{finetune_context}_steps1000_lr1e-05_bs32"
+            f"_context_{predict_context}_origin{origin}")
+    return experiment(name)
+
+configs = {f"zero-shot, context {c}": experiment(f"context_{c}") for c in (early, late)}
+for finetune_context in (late, early):
+    for predict_context in (early, late):
+        configs[f"LoRA@{finetune_context}, context {predict_context}"] = lora(
+            finetune_context, predict_context, VALIDATION_ORIGIN)
+
+by_segment = metrics.compare(
+    {name: on_validation(table).with_columns(segment) for name, table in configs.items()},
+    by="segment")
+md(by_segment.select("model", "segment", "WQL").pivot(on="segment", index="model",
+                                                      values="WQL"), digits=6)
+```
+
+Per-segment winners: **fine-tuned at 1,099 and forecasting at 1,099 for days 1–7, fine-tuned 
+at 1,099 and forecasting at 1,829 for days 8–28.** So *cross pairing** between the fine-tuning context 
+length and the one for predicting turns out helpful! However the margins are very small, and the gap 
+between it and the next best configuration is in the fourth decimal of WQL.
+
+## The one measurement on the test window
+
+Once again, it is good to note that I didn't use the test window for decision anywhere in this post. 
+What did we gain from all this refining work?
+
+```{python}
+#| label: tbl-final
+#| tbl-cap: "Test window, 2016-04-25 to 2016-05-22. Read once."
+#| code-fold: true
+final = ["zero", "seasonal_naive", "moving_average_28d", "xgboost_btrotta",
+         "chronos2_vanilla", "chronos2_best"]
+md(rename_models(table_of(final, "test"))
+   .select(["model", "n_series"] + metrics.METRICS).sort("WMAPE"))
+```
+
+```{python}
+#| label: fig-final-buckets
+#| fig-cap: "Test window, by horizon bucket."
+#| code-fold: true
+fig, axes = plots.plot_by_bucket(table_of(final, "test", by="horizon_bucket"),
+                                 metrics.METRICS)
+plt.show()
+```
+
+The zero-shot model and the final model are **the same model to within a rounding error.** 
+On MAE, WMAPE and P90 the tuned model is marginally *worse*; on WQL it is 0.23% better. Set 
+against XGBoost, zero-shot gains 8.32% of WMAPE and the final model 8.29% — the tuning 
+removed a sliver rather than adding one.
+
+```{python}
+#| label: fig-final-examples
+#| fig-cap: "Four test-window series at the 98th, 75th, 50th and 25th percentile of volume. Bands: the final model's quantiles. Dots: what sold."
+#| code-fold: true
+volume_test = (scored("chronos2_best", "test")
+               .group_by("id").agg(pl.col("y").sum().alias("volume")).sort("volume"))
+examples = [volume_test["id"][int(q * (volume_test.height - 1))]
+            for q in (0.98, 0.75, 0.5, 0.25)]
+loaded = {m: pl.read_parquet(ARTIFACTS / "predictions" / f"{m}_{ROSTER}.parquet")
+             .filter(pl.col("origin") == TEST_ORIGIN)
+          for m in ("xgboost_btrotta", "chronos2_vanilla", "chronos2_best")}
+
+fig, axes = plt.subplots(len(examples), 1, figsize=(11, 10), sharex=True)
+for ax, series_id in zip(axes, examples):
+    one = TRUTH.filter(pl.col("id") == series_id)
+    past = one.filter(pl.col("date") <= TEST_ORIGIN,
+                      pl.col("date") > TEST_ORIGIN - timedelta(days=84))
+    actual = one.filter(pl.col("date") > TEST_ORIGIN,
+                        pl.col("date") <= TEST_ORIGIN + timedelta(days=28))
+    pick = lambda m: loaded[m].filter(pl.col("id") == series_id)
+    plots.plot_fan(ax, past, pick("chronos2_best"), actual,
+                   color=plots.MODEL_COLORS["chronos2_best"], label="Chronos-2 final")
+    for model, name in [("chronos2_vanilla", "Chronos-2 zero-shot"),
+                        ("xgboost_btrotta", "XGBoost")]:
+        rows = pick(model)
+        ax.plot(rows["date"].to_numpy(), rows["y_pred"].to_numpy(),
+                color=plots.MODEL_COLORS[model], linewidth=1.2, label=name)
+    ax.axvline(TEST_ORIGIN, color=plots.MUTED_TEXT_COLOR, linewidth=0.8, linestyle=":")
+    ax.set_title(series_id, loc="left")
+axes[0].legend(loc="upper left", bbox_to_anchor=(1.01, 1))
+fig.tight_layout()
+plt.show()
+```
+
+## What this adds up to
+
+Out of the box, on data it had never seen, Chronos-2 beat a reproduced top-4% feature
+pipeline by 8.3% of WMAPE. Then the combined effect of greedy optimization on every axes yields 
+**a fraction of a percent, in the wrong direction on the
+point forecast.** These results really highlight the power of the model's architecture. It
+isn't even a heavy-duty model with only 120M parameters, to be compared to GPT-3's **175B
+parameters**: and that was in 2020! However the posts also reveal a transformer's shortcomings: past the out-of-the-box 
+performances, only very meager gains can be made, if not none at all.
+
+The flat part of that story is not a failure of effort. Every configuration I tried lands in
+the same narrow band, which is what a **ceiling** looks like from the inside. The honest next
+question is not "which knob did I miss" but **"is this a limit of the tuning, or of the
+problem?"** — and that one is answerable, which is what [the third post](../03-ceiling/) does.
+It also weighs the one lever I never pulled: **treat different series differently** —
+fine-tune per group, cross-learn inside a group, one model per group. The possibilities there
+are endless, which is exactly why the question deserves an answer and some guidance instead of blindly 
+testing as many models as our machines can take on.

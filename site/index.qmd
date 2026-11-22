@@ -1,0 +1,57 @@
+---
+title: "Investigating Chronos-2"
+subtitle: "How does a pre-trained time-series foundation model perform on a hard task?"
+listing:
+  id: series
+  contents: posts
+  sort: "order"
+  type: default
+  fields: [title, description, reading-time, date]
+  categories: false
+  sort-ui: false
+  filter-ui: false
+  feed: true
+page-layout: full
+title-block-banner: true
+---
+
+## The question
+
+Foundation models for time series are sold as a replacement for the feature
+engineering that gradient-boosted trees need: no lags to design, no calendar to
+encode, no per-series training, etc. This series tests that claim and the intuition that 
+a model designed to tackle any time-series without further specification will be weaker when faced with a very unique problem.
+
+This "hard" time-series problem is the [M5 Forecasting --- Accuracy](https://www.kaggle.com/competitions/m5-forecasting-accuracy)
+panel, composed of item×store series of daily Walmart sales.
+
+M5 was chosen for two specific reasons beyond its fame - which makes comparisons all the more relevant. Chronos-2 has **no
+training leakage** on it, so we can consider zero-shot predictions. And its
+dynamics are mostly **endogenous**: on fev-bench the multivariate model beats
+its univariate sibling by a hair (WQL 0.555 vs 0.559), which implies a
+cross-series machinery has little to feed on here (which Chronos2 can be equipped with). That makes it a clean test of the model itself rather than of unfair competition over covariates one can invent around it.
+
+## An analysis in three parts
+
+The order matters, as it is a linear progression through experiments, observations, and interpretations.
+
+::: {#series}
+:::
+
+## Underlying rules for the numbers
+
+Three commitments, kept throughout:
+
+- **Every choice is made on a validation origin** (2016-03-27) and measured once
+  on a test origin (2016-04-24). Nothing is selected on the window it is scored on.
+- **The evaluation roster is frozen** before any model runs, and every metric is
+  reported next to the number of series it was computed on.
+- **Any two numbers whose difference is interpreted share their hardware.** CPU
+  and GPU disagree in the third decimal of WQL, which is enough to invert a close
+  ranking, so the Chronos-2 corpus is entirely GPU and every artifact carries the
+  device it was produced on.
+
+Code and artifacts: [`m5-chronos2`](https://github.com/amelien-quenet/m5-chronos2).
+
+<!-- TODO (yours, not mine to invent): a short paragraph on why you did this —
+     first blog, what you wanted to learn, who you are writing for. -->

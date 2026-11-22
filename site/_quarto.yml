@@ -1,0 +1,32 @@
+project:
+  type: website
+  # Every post executes from this folder, so one relative path reaches the study
+  # it reads: "..". Without this, each post would resolve paths against its own
+  # folder. `_study.py` depends on it.
+  execute-dir: project
+  resources:
+    - "posts/**/*.mp4"
+  # No CNAME here, deliberately. The custom domain is set once on the user site
+  # (amelien-quenet.github.io) and GitHub applies it to every project site on the
+  # account, so this one is served at amelien-quenet.fr/m5-chronos2/ with no DNS
+  # of its own. A CNAME file in this repo would try to claim the apex instead.
+
+website:
+  title: "Investigating Chronos-2"
+  description: "A measured study of a time-series foundation model on the M5 benchmark: a gradient-boosted baseline, the foundation model, and what it takes to find out whether the remaining headroom is reachable."
+  site-url: https://amelien-quenet.fr/m5-chronos2
+  navbar:
+    left:
+      - text: "amelien-quenet.fr"
+        href: https://amelien-quenet.fr/
+    right:
+      - icon: github
+        href: https://github.com/amelien-quenet/m5-chronos2
+
+format:
+  html:
+    # `brand` was in an earlier config but no _brand.yml exists yet, so it is
+    # dropped until one is written.
+    theme: cosmo
+    css: styles.css
+    toc: true

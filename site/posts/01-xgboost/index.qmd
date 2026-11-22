@@ -1,0 +1,296 @@
+---
+title: "The baseline: XGBoost"
+description: "Reproducing a top-4% M5 gradient-boosting solution, and building the evaluation harness. Surprisingly, fifty-two engineered features beat a 28-day mean by less than one point."
+order: 1
+date: "2026-11-01"
+categories: [M5, XGBoost, evaluation]
+draft: false
+---
+
+```{python}
+#| echo: false
+import sys; sys.path.insert(0, ".")
+from _study import (SALES, EVAL_ROSTER, WINDOWS, VALIDATION_ORIGIN,
+                    scored, table_of, rename_models, md, metrics, plots, pl)
+import matplotlib.pyplot as plt
+import numpy as np
+```
+
+Testing our foundation model only makes sense when putting it against something else. So I began by building the reference
+it would have to beat: a feature-engineered gradient-boosting model, in the tradition that
+won M5, inspired by a public top-4% solution.
+
+The result worth stating up front is how little the feature engineering buys over the
+"mean of the last 28 days" elementary model. That is not a criticism of the solution reproduced — I reduced it
+to a single XGBoost model where the original used LightGBM - but by seeing this fully engineered XGBoost version as a canonical representative of traditional machine learning techniques, it makes the
+comparison in [the next post](../02-chronos2/) all the more interesting.
+
+## The dataset
+
+One target value per series per day: units of one item sold in one Walmart store. History
+runs 2011-01-29 to 2016-05-22, 1,941 days, 30,490 series. **The task is to predict 28 days ahead.**
+
+I work throughout on a frozen random sample of 500 series, drawn once and saved, so every number in these three posts comes from the same items. The sample is for practical computing power reasons, as the whole study was made on a 10 year old laptop.
+
+```{python}
+#| label: fig-intermittency
+#| fig-cap: "Left: share of on-sale days with no sale, one count per series. Right: mean units sold per day, log scale, by product category. The population I forecast is mostly near zero."
+#| code-fold: true
+on_sale = SALES.filter(~pl.col("is_missing"))
+per_series = on_sale.group_by("id", "cat_id").agg(
+    pl.col("sales").mean().alias("mean_daily"),
+    (pl.col("sales") == 0).mean().alias("zero_share"),
+)
+median_zero = per_series["zero_share"].median()
+median_daily = per_series["mean_daily"].median()
+
+fig, (left, right) = plt.subplots(1, 2, figsize=(11, 3.2))
+left.hist(per_series["zero_share"].to_numpy(), bins=np.linspace(0, 1, 21),
+          color=plots.MAIN_COLOR, edgecolor="white")
+left.set_xlabel("share of on-sale days with zero sales")
+left.set_ylabel("number of series")
+for category, colour in plots.CATEGORY_COLORS.items():
+    values = per_series.filter(pl.col("cat_id") == category)["mean_daily"].to_numpy()
+    right.hist(values, bins=np.logspace(-2, 2.5, 28), histtype="step",
+               linewidth=2, color=colour, label=category)
+right.set_xscale("log")
+right.set_xlabel("mean units sold per day (log scale)")
+right.legend()
+fig.tight_layout()
+plt.show()
+```
+
+The median sells of the averaged series is **`{python} f"{median_daily:.2f}"` units a day**, and the median share of days a series is on the shelf but isn't sold is
+**`{python} f"{median_zero:.0%}"`**. Figure 1 proves that this median is fairly representative, so we are dealing with **mostly near zero series**. Two consequences run through
+everything that follows.
+
+First, **a zero is information, not a gap.** There is only one exception: the days
+before an item's first price in `sell_prices.csv`, when it was not on the shelf at all.
+Those are dropped from every history (I tracked this effect by only keeping values from where a price tag has been attributed to an item). Everything else is a real zero — **the item was
+available and nobody bought it** — and it is part of what the forecast has to get right.
+
+Second, periods of zero sales are common, so if our evaluation metric is a percentage error, we need to filter the series. This could reduce further our sample size.
+
+## The harness comes first
+
+I set two forecast origins, for two different purposes:
+
+```{python}
+#| label: tbl-windows
+#| tbl-cap: "The two windows. Every choice I make is made on the validation window; I read the test window once, at the end of the next post."
+#| echo: false
+md(WINDOWS)
+```
+
+A (series, window) pair is scored only if it clears three conditions:
+
+1. at least 56 days (arbitrary, but reasonable) on sale before the origin
+2. no missing day inside the window
+3. at least one unit sold in the window.
+
+The third is necessary — WMAPE and WQL divide by the
+window's total, so a series that sells nothing has no defined error (cf. paragraph above).
+
+The surviving list is frozen to disk. A roster that quietly changes
+between models turns every later comparison into a comparison of populations, which would be undesirable.
+
+```{python}
+#| echo: false
+scorable = dict(EVAL_ROSTER.group_by("role")
+                .agg(pl.col("id").n_unique().alias("series"))
+                .iter_rows())
+```
+
+Of the 500 sampled series, **`{python} f"{scorable['validation']}"` are scorable** on the
+validation window and **`{python} f"{scorable['test']}"` on the test window**. It so happens that
+every exclusion is the no-sale condition.
+
+### Five metrics, and what each is for
+
+| metric | definition | what it is for |
+|---|---|---|
+| MAE | mean of $\lvert y - y_{pred} \rvert$ | error in units sold |
+| WMAPE | $100 \cdot \sum \lvert y - y_{pred}\rvert / \sum y$ | scale-free, survives zeros: the headline |
+| P90 | 90th percentile of $\lvert y - y_{pred}\rvert$ | the bad days |
+| WQL | mean over $q \in \{0.1,\dots,0.9\}$ of $2 \sum L_q / \sum y$ | the whole forecast distribution |
+| RQL | $100 \cdot \sum L_{0.2}(y, y_{pred}) / \sum y$ | the point forecast, with over-prediction priced at four times under-prediction |
+
+$L_q$ is the quantile loss on a forecast $f$: $q\,(y - f)$ when $f \leqslant y$,
+$(1-q)(f - y)$ when $f \geqslant y$. WQL applies it to each quantile forecast $y_{pred,q}$ in
+turn, and is a staple scoring rule. **For distributional models, $y_{pred,q}$ refers to the median value.**
+RQL applies $L_{0.2}$ to the point forecast $y_{pred}$ instead, because the asymmetry is meant
+to price the cost of acting on the number the model puts forward. Scoring it on the 0.2
+quantile column would reward a model for submitting a deliberately low number: over-predicting 
+costs 4 times more than under-predicting. This signal matters in practice as retailers want to know
+ whether following the predictions means risking over production (more costly then under production). If not mentioned, all sums run over scored
+(series, day) pairs, never averaged per series and then averaged again.
+
+One remark for [the next post](../02-chronos2/): **for a model that only gives a point
+forecast, every quantile column is a copy of it, and WQL collapses to WMAPE/100.** A
+probabilistic model can beat that number only by saying something true about its own
+uncertainty. So WQL is not a fair axis for comparing a point model with a distributional
+one; MAE, WMAPE, P90 and RQL are. However **WQL will be our main decider for a batch of 
+distributional models.**
+
+
+## Three naive baselines
+
+Always zero, repeat-last-week, and the mean of the last 28 days. On intermittent data the
+first is not absurd, and the third is a genuinely strong competitor.
+
+```{python}
+#| label: tbl-baselines
+#| tbl-cap: "Validation window. Lower is better everywhere."
+#| code-fold: true
+baselines = ["zero", "seasonal_naive", "moving_average_28d"]
+md(rename_models(table_of(baselines, "validation"))
+   .select(["model", "n_series"] + metrics.METRICS).sort("WMAPE"))
+```
+
+Note the ordering: repeating last week is barely better than predicting nothing at all,
+while a flat **28-day mean removes about a fifth of the error**. After all, on series this sparse the exact
+weekly pattern of a single item is mostly noise, and averaging it away beats reproducing it.
+
+RQL inverts the ranking — the zero forecast wins it outright, 20 against 39. The
+metric is doing its job, by showing how low volume the real values mostly are.
+
+## The features
+
+Rather than invent a feature set, which consumes a lot of time (and insight!), I reproduced 
+one that is public and well ranked:
+[btrotta/kaggle-m5](https://github.com/btrotta/kaggle-m5) (`predict.py`) is a top-4% M5
+solution. It builds fifty-two features in four families:
+
+- **the series' own past** — lags 1 to 7, means of the last 7/14/28 days, running mean and
+  variance overall and per weekday;
+- **the same, two levels up** — the item's department in its store, and the item across all
+  stores, so a thin series borrows the shape of its neighbours;
+- **calendar** — weekday, month, SNAP benefit days, and an "event uplift" measured as mean
+  sales *n* days after an event minus the same weekday a week later;
+- **price** — the current price and its change over 7 and 14 days, plus days since first sale.
+
+The strategy is direct: **28 models, one per forecast day**. The model for day *k* sees
+sales only up to the origin, with its lag features shifted *k* days further back, so no
+forecast is ever fed back as an input and **nothing in the window leaks**.
+
+I strayed from the original in five places, deliberately:
+
+- XGBoost instead of LightGBM, with the closest equivalent settings (easier to run, and the core principle);
+- training on the 500-series sample rather than all 30,490 — though the department and
+  item features are still computed on all of them;
+- boosting rounds chosen by early stopping on the last 28 days *before* the origin, where
+  the original stops on the window it then reports;
+- the event uplift implemented as intended rather than as coded;
+- missing days are defined by the price file.
+
+## What it buys
+
+```{python}
+#| label: tbl-xgb
+#| tbl-cap: "XGBoost against the baselines, both windows."
+#| code-fold: true
+models = baselines + ["xgboost_btrotta"]
+XGB_TABLE = pl.concat([
+    table_of(models, role).with_columns(pl.lit(role).alias("window"))
+    for role in ("validation", "test")
+])
+
+def wmape(model, window):
+    """One WMAPE cell of this table, so the prose below cannot drift away from it."""
+    return XGB_TABLE.filter(pl.col("model") == model,
+                            pl.col("window") == window)["WMAPE"].item()
+
+md(rename_models(XGB_TABLE)
+   .select(["window", "model", "n_series"] + metrics.METRICS).sort("window", "WMAPE"))
+```
+
+```{python}
+#| label: fig-buckets
+#| fig-cap: "Validation window, by horizon bucket. Baselines in grey. The gap to the 28-day mean opens except in the second bucket."
+#| code-fold: true
+fig, axes = plots.plot_by_bucket(table_of(models, "validation", by="horizon_bucket"),
+                                 metrics.METRICS)
+plt.show()
+```
+
+```{python}
+#| echo: false
+# Two ways of putting the gain over the 28-day mean on a relative scale.
+def relative_gain(role):
+    table = metrics.compare(
+        {model: scored(model, role)
+         for model in ("zero", "moving_average_28d", "xgboost_btrotta")},
+        reference="moving_average_28d",
+    )
+    wmape = {row["model"]: row["WMAPE"] for row in table.iter_rows(named=True)}
+    change = table.filter(pl.col("model") == "xgboost_btrotta")["WMAPE_change_%"].item()
+    return {
+        # 1. Plain relative error reduction. Negative change = lower error, so flip the
+        #    sign. MAE gives the identical percentage and is not quoted twice: both
+        #    metrics divide the same sum of absolute errors by a denominator (row count,
+        #    total actual) that no model can move, so their ratios are the same number.
+        "cut": -change,
+        # 2. The same gain as a share of what the 28-day mean itself won over forecasting
+        #    nothing. The zero forecast is scored here rather than assumed to sit at
+        #    WMAPE 100, so the anchor stays honest if the roster ever changes.
+        "of_mean_gain": 100 * (wmape["moving_average_28d"] - wmape["xgboost_btrotta"])
+                            / (wmape["zero"] - wmape["moving_average_28d"]),
+    }
+
+GAIN = {role: relative_gain(role) for role in ("validation", "test")}
+```
+
+With the 52 features, we get **0.8 WMAPE points on validation, 1.2 on test.**
+In relative terms that is a cut of `{python} f"{GAIN['validation']['cut']:.1f}"`% in WMAPE on
+validation and `{python} f"{GAIN['test']['cut']:.1f}"`% on test — the same percentages for MAE,
+which cannot differ — and set against the fifth of the error the 28-day mean had already removed
+on its own, the fifty-two features add only `{python} f"{GAIN['validation']['of_mean_gain']:.0f}"`%
+of that ground on validation and `{python} f"{GAIN['test']['of_mean_gain']:.0f}"`% on test.
+The horizon view says where that comes from — for all metrics except P90, the two are nearly tied after the first week. So the first week is especially to the model's advantage: it 
+is where it should indeed be at its strongest.
+
+The per-series view is blunter.
+
+```{python}
+#| label: fig-index
+#| fig-cap: "Per-series difference in WQL, XGBoost against the 28-day mean, series ordered by sales volume in the window."
+#| code-fold: true
+def per_series_wql(model):
+    return metrics.score(scored(model, "validation"), by="id").select(
+        "id", pl.col("WQL").alias(f"WQL_{model}"))
+
+volume = (scored("xgboost_btrotta", "validation")
+          .group_by("id").agg(pl.col("y").sum().alias("volume")))
+comparison = (per_series_wql("moving_average_28d")
+              .join(per_series_wql("xgboost_btrotta"), on="id")
+              .join(volume, on="id"))
+
+fig, ax = plt.subplots(figsize=(11, 3.5))
+share = plots.index_plot(ax, comparison, "WQL",
+                         "moving_average_28d", "xgboost_btrotta", order_by="volume")
+plt.show()
+```
+
+XGBoost has the lower WQL (*ie* WMAPE) on `{python} f"{share:.0%}"` of series. It loses on the majority
+of items and still wins overall, because the items it wins on are the ones that sell. Therefore, 
+it reacts better to changes. The core difficulty of the dataset really is how low the values are.
+
+## What the baseline settles
+
+Three things carry into the next post.
+
+**The dataset's difficulty.** As we showed, this prediction problem is made much harder by the **low 
+volume** of the series (which are integer values, so it isn't just a matter of scaling).
+
+**A number to beat.** **WMAPE `{python} f"{wmape('xgboost_btrotta', 'validation'):.1f}"` on validation, `{python} f"{wmape('xgboost_btrotta', 'test'):.1f}"` on test** (pooled over the whole forecast horizon) — and the honest framing is
+that most of that was already available from a 28-day mean (`{python} f"{wmape('moving_average_28d', 'validation'):.1f}"` and `{python} f"{wmape('moving_average_28d', 'test'):.1f}"`), despite how rough of an estimate it is.
+
+**A caveat.** XGBoost is trained on squared error, so it estimates a
+conditional mean. On absolute-error metrics the optimal point forecast is the *median*, so
+any model that returns a median starts with a structural advantage on MAE and WMAPE that has
+nothing to do with forecasting better. However, Chronos-2 returns a median. Moreover, because 
+it is distributional, Chronos-2 has a slight edge. When looking at WQL, without regards to 
+if the derived point forecast is actually better. **So in case of a tight
+match, strong conclusions would be unfaithful.**
+
+[Next page](../02-chronos2/)

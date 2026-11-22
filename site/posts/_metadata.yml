@@ -1,0 +1,16 @@
+# Options applying to every post.
+
+# No freeze. The figures must track the artifacts: `freeze: auto` re-executes only
+# when the .qmd changes, so a new run that changes the parquets but not the prose
+# would publish the previous figures with no error. Re-executing costs seconds
+# (the posts only read parquets and plot). If previews ever get slow, switch to
+# `freeze: auto` and publish with `quarto render --no-freeze` - never a bare render.
+freeze: false
+
+title-block-banner: true
+toc: true
+
+# Code is visible but folded, so the prose leads and the method is one click away.
+code-fold: true
+code-summary: "Show the code"
+code-tools: true
