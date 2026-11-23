@@ -20,13 +20,13 @@
 
 
 
-<p><a href="../02-chronos2/">The previous post</a> ended flat: covariates lost, cross-learning lost, a 46-length context sweep bought 0.11%, a LoRA fine-tune was a wash. One lever was left — <strong>treat different items differently</strong>: fine-tune per group, cross-learn inside a group, one model per group.</p>
-<p>That lever has a precondition, and the precondition is testable before any of it is built. For a static grouping to help, <strong>difficulty has to be a stable property of an item.</strong> If the items that are hard this week are not the ones that were hard last week, no grouping — hand-made, clustered or learned — has anything to hold on to.</p>
-<p>This post answers that, and then keeps narrowing. Difficulty <em>is</em> a stable property of the item. Two thirds of it is volume, which needs no clustering to exploit. The third that survives is real — bigger than every other term in the budget except the irreducible noise — and it is <strong>not</strong> in the weekly shape, which is the one candidate axis I had built the apparatus to test.</p>
+<p><a href="../02-chronos2/">The previous post</a> ended flat. One lever was left: <strong>treat different items differently</strong>. Fine-tune per group, cross-learn inside a group, one model per group.</p>
+<p>That lever has a precondition, and it is testable beforhand. For a static grouping to help, <strong>difficulty has to be a stable property of an item.</strong> If the items that are hard this week are not the ones that were hard last week, it means the error cannot be decreased by finding a different setup for the worst items, as it is akin to a transient effect.</p>
+<p>This post answers that, and then keeps narrowing. Difficulty <em>is</em> a stable property of the item. Two thirds of it is volume, which needs no clustering to exploit.</p>
 <section id="the-panel" class="level2">
 <h2 class="anchored" data-anchor-id="the-panel">The panel</h2>
-<p>Twenty-four origins, one week apart, scored over 7-day non-overlapping windows. Non-overlapping matters: with overlapping windows the correlation between consecutive origins would be partly an artefact of shared days. The model is the zero-shot one at the context length chosen for days 1–7 — the fine-tuned model is disqualified here, because walking its test-origin checkpoint backwards would let it see the future of every earlier window.</p>
-<p>The origins run 2015-10-18 to 2016-03-27. Of the 494 series scorable at least once, 138 are scorable at <strong>every</strong> origin, and those are the panel. I print that count rather than bury it, because every item in the panel has to have its difficulty measured on the same set of weeks.</p>
+<p>To analyse the difficulty’s, we divide the time horizon in twenty-four origins, one week apart, in order to score over <em>7-day non-overlapping windows</em> (non-overlapping matters: with overlapping windows the correlation between consecutive origins would be partly an artefact of shared days). The <strong>restricted model used</strong> in this post is the zero-shot one at the context length chosen for days 1–7 (see <a href="../02-chronos2/">the previous post</a>), <strong>predicting 7 days ahead only</strong> — the fine-tuned model is disqualified here, because walking its test-origin checkpoint backwards would let it see the future of every earlier window.</p>
+<p>The dataset sample is the same as in the previous post, and amongst the 494 series that are scorable at least once, <strong>138 are scorable at every</strong> origin, so they constitute our panel. This way, every item in the panel has its difficulty measured on the same set of weeks. The figure below plots each of the selected item’s relative difficulty at each forecast origin:</p>
 <div id="cell-fig-panel" class="cell" data-execution_count="3">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -134,13 +134,14 @@ Figure&nbsp;1: The panel. Rows are items sorted by average difficulty, columns a
 </div>
 </div>
 </div>
-<p>The error of each (item, origin) cell splits four ways:</p>
+<p>Though we can suspect an at least mild correlation between weeks, as the graph suggests some horizontal lines, the error ditribution and origin needs to be properly assessed. So we split the error of each (item, origin), written <img src="https://latex.codecogs.com/png.latex?x_%7Bi,o%7D">, cell in <strong>four ways</strong>:</p>
 <p><img src="https://latex.codecogs.com/png.latex?x_%7Bi,o%7D%20=%20%5Cmu%20+%20%5Calpha_i%20+%20%5Cbeta_o%20+%20%5Cvarepsilon_%7Bi,o%7D"></p>
-<p><img src="https://latex.codecogs.com/png.latex?%5Cmu"> is the global mean. <img src="https://latex.codecogs.com/png.latex?%5Calpha_i"> is the item — by construction the only part a static grouping could exploit. <img src="https://latex.codecogs.com/png.latex?%5Cbeta_o"> is the week: some weeks are hard for everyone. What is left splits further into a part that survives to the next origin, a part that does not, and the sampling noise of the cell itself, measured from the odd and even days of each window. It is all contained within <img src="https://latex.codecogs.com/png.latex?%5Cvarepsilon_%7Bi,o%7D">.</p>
+<p>where <img src="https://latex.codecogs.com/png.latex?%5Cmu"> is the <strong>global mean</strong>; <img src="https://latex.codecogs.com/png.latex?%5Calpha_i"> is the <strong>item</strong> — by construction the only part a static grouping could exploit; <img src="https://latex.codecogs.com/png.latex?%5Cbeta_o"> is the <strong>week</strong> - are some weeks are hard for everyone? What is left splits further into a part that survives to the next origin (<em>persistent</em>), a part that does not (<em>transient</em>), and the sampling <em>noise</em> of the cell itself, measured from the odd and even days of each window. It is all contained within <img src="https://latex.codecogs.com/png.latex?%5Cvarepsilon_%7Bi,o%7D">.</p>
+<p>Our task now is to <strong>scan the distribution for clusters and continuums.</strong></p>
 </section>
 <section id="does-the-estimator-work" class="level2">
 <h2 class="anchored" data-anchor-id="does-the-estimator-work">Does the estimator work?</h2>
-<p>Before touching the real panel, I ran the method on a simulated one with known components, at the same panel size and noise level:</p>
+<p>Before touching the real panel, I ran our scaning method on <strong>a simulated one with known components</strong>, at the same panel size and noise level. The results are:</p>
 <div id="cell-fig-control" class="cell" data-execution_count="4">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -609,12 +610,12 @@ Figure&nbsp;2: Left: planted components against recovered ones, on a simulated p
 </div>
 </div>
 </div>
-<p>Two further controls run silently and both pass: a panel with no item effect returns 0.8% after bias adjustment rather than the 4.5% the raw estimator reports, and a pure-noise panel returns a persistence of +0.005 rather than the negative value double-centring would otherwise induce.</p>
-<p>The right panel is the method’s one real limit. A slow <strong>drift</strong> is hard to tell from a constant difficulty over six months, and the estimator divides it badly: at an autocorrelation of 0.97, a drift with <em>no</em> constant item effect planted anywhere comes back as a 16% <strong>item</strong> effect. The total it does get right, to within 1.4 points everywhere on the grid.</p>
-<p>So I report both readings: the item share answers <em>could a grouping fitted once and left alone help</em>, and the sum answers <em>is there anything stable at all, even if it has to be refitted</em>.</p>
+<p>The left subfigure proves <strong>we can trust the method</strong> for recovering error shares. However, the right subfigure is the method’s one real limit. In case of a <em>slow drift</em>, it is hard to tell from a constant difficulty over six months, and the estimator divides it badly: at an autocorrelation of 0.97, a drift with <em>no</em> constant item effect planted anywhere comes back as a 16% <strong>item</strong> effect. The total it does get right, to within 1.4 points everywhere on the grid.</p>
+<p>The takeaway is that the item share answers <em>could a grouping fitted once and left alone help</em>, and the sum answers <em>is there anything stable at all, even if it has to be refitted</em>.</p>
 </section>
 <section id="where-the-error-lives" class="level2">
 <h2 class="anchored" data-anchor-id="where-the-error-lives">Where the error lives</h2>
+<p>Now what does our method yield for our real pannel?</p>
 <div class="cell" data-execution_count="5">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -708,7 +709,7 @@ font-style: inherit;">1</span>)</span></code></pre></div></div>
 <div id="tbl-budget" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-execution_count="5">
 <figure class="quarto-float quarto-float-tbl figure">
 <figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-budget-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Table&nbsp;1: The variance budget of log WQL. Intervals from 1,000 resamples of the items — not of the cells, since cells within an item are not independent and that dependence is the thing being measured.
+Table&nbsp;1: The variance budget of log WQL. Intervals from 1,000 resamples of the items — not of the cells, since cells within an item are not independent and that dependence is the thing being measured. CI columns are nonparametric bootstrap percentile intervals over items, at 95%.
 </figcaption>
 <div aria-describedby="tbl-budget-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 <div class="cell-output cell-output-display cell-output-markdown" data-execution_count="5">
@@ -777,12 +778,16 @@ Table&nbsp;1: The variance budget of log WQL. Intervals from 1,000 resamples of 
 </figure>
 </div>
 </div>
-<p>Two numbers carry the section. <strong>The identity of the item accounts for 42% of the variance in log WQL</strong> once the noise inside each <img src="https://latex.codecogs.com/png.latex?%5Calpha_i"> is removed. And <strong>the week accounts for 2%</strong> — there are essentially no weeks that are hard for everybody. Difficulty has an address, and the address is the item.</p>
-<p>Most of what remains is sampling noise, which is what forecasting 7-day windows of items selling a few units a week buys you. That matters for the next section rather than being an aside.</p>
+<p>Two numbers summarise the section.</p>
+<ol type="1">
+<li><strong>The identity of the item accounts for 42% of the variance in log WQL</strong> once the noise inside each <img src="https://latex.codecogs.com/png.latex?%5Calpha_i"> is removed.</li>
+<li><strong>the week accounts for 2%</strong> — there are essentially no weeks that are hard for everybody. Difficulty mostly comes from the item.</li>
+</ol>
+<p>Most of what remains is sampling noise, which is what forecasting 7-day windows of items selling a few units a week buys you. That matters for the next section, in which we try to findt he same result with a different tool.</p>
 </section>
 <section id="two-instruments-one-answer" class="level2">
 <h2 class="anchored" data-anchor-id="two-instruments-one-answer">Two instruments, one answer</h2>
-<p>A decomposition is a model, and a model can be wrong. Rank agreement is not a model: it is a direct measurement of consistency, with no assumptions behind it.</p>
+<p>The previous section gave us our conclusion. But a decomposition is a model, and <strong>a model can be wrong.</strong> Thereofer, we may want to use something like <strong>rank agreement to confirm our findings</strong>: it is a direct measurement of consistency, with <em>no assumptions</em> behind it:</p>
 <div id="cell-fig-ranks" class="cell" data-execution_count="6">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -1019,10 +1024,16 @@ Figure&nbsp;3: Left: Spearman correlation of the difficulty ranking between cons
 </div>
 </div>
 </div>
-<p>A median of +0.52 between consecutive origins looks like weak agreement. Test–retest conventions call anything under 0.5 weak. Taken at face value, the two sections of this post seem to disagree: a large item effect, and a ranking that only half holds.</p>
-<p>But they do not disagree. <strong>The decomposition predicts the rank correlation</strong>, and the prediction can be written down from the variance shares alone.</p>
-<p>Within one origin the week effect is a constant and does not touch the across-items ranking, so the spread of the measured error at a single origin is <img src="https://latex.codecogs.com/png.latex?%5Coperatorname%7Bvar%7D(%5Calpha)%20+%20v_%7B%5Ctext%7Bpers%7D%7D%20+%20v_%7B%5Ctext%7Btrans%7D%7D%20+%20v_%7B%5Ctext%7Bnoise%7D%7D">, while the covariance between two consecutive origins keeps only the parts that survive the step, <img src="https://latex.codecogs.com/png.latex?%5Coperatorname%7Bvar%7D(%5Calpha)%20+%20v_%7B%5Ctext%7Bpers%7D%7D">. Their ratio is the correlation the model expects anyone to <em>observe</em>. Six months apart the persistent part has decayed and only <img src="https://latex.codecogs.com/png.latex?%5Coperatorname%7Bvar%7D(%5Calpha)"> remains.</p>
-<p>So divide instead by the <strong>reliable</strong> part of a cell — everything except the sampling noise — and what comes out is the correlation between the underlying difficulties rather than between their noisy estimates.</p>
+<p>Immediately, the median of +0.52 between consecutive origins looks like a weak agreement, challenging the previous section’s result (test–retest conventions call anything under 0.5 weak). Taken at face value, the two sections seem to <strong>disagree: a large item effect, and a ranking that only half holds.</strong></p>
+<p>But they don’t. The decomposition predicts the rank correlation, and this prediction can be written down from the variance shares alone:</p>
+<ol type="1">
+<li>Within one origin the week effect is a constant and does not touch the across-items ranking, so the spread of the measured error at a single origin is <img src="https://latex.codecogs.com/png.latex?%5Coperatorname%7BV%7D_%7Bcell%7D%20=%20%5Coperatorname%7Bvar%7D(%5Calpha)%20+%20v_%7B%5Ctext%7Bpers%7D%7D%20+%20v_%7B%5Ctext%7Btrans%7D%7D%20+%20v_%7B%5Ctext%7Bnoise%7D%7D"></li>
+<li>The covariance between two consecutive origins keeps only the parts that survive the step from the previous value, <img src="https://latex.codecogs.com/png.latex?%5Coperatorname%7Bvar%7D(%5Calpha)%20+%20v_%7B%5Ctext%7Bpers%7D%7D">.</li>
+<li>Their ratio is the correlation the model expects anyone to observe. Six months apart the persistent part has decayed and only <img src="https://latex.codecogs.com/png.latex?%5Coperatorname%7Bvar%7D(%5Calpha)"> remains.</li>
+<li>So rank correlation is equal to <img src="https://latex.codecogs.com/png.latex?%5Cfrac%7B%5Coperatorname%7Bvar%7D(%5Calpha)%7D%7B%5Coperatorname%7BV%7D_%7Bcell%7D%7D">.</li>
+</ol>
+<p>Therefore <strong>noise</strong> enters only in the denominator, and being responsible for around 40% of cell’s error, so <strong>it halves this correlation rate</strong>, despite being unrepresentative of the actual phenomenon.</p>
+<p>So divide instead by the <strong>reliable</strong> part of a cell — everything except the sampling noise — and what comes out is the correlation between the underlying difficulties rather than between their noisy estimates:</p>
 <div id="cell-fig-attenuation" class="cell" data-execution_count="7">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -1550,16 +1561,15 @@ Figure&nbsp;4: Left: what the decomposition predicts the rank correlation will b
 </div>
 </div>
 </div>
-<p>A single 7-day window is only 56% reliable: more than two fifths of its variance is the counting noise of an item that sells a handful of units a week. Seen through a ruler that blunt, <strong>a difficulty ordering stable at 0.86 can only show up as +0.52</strong> — and the grey bar is what the bluntness costs.</p>
-<p>The residuals are the reassuring part: they fall on opposite sides of zero. A systematic error in the variance model would push both the same way.</p>
-<p>So the observed +0.52 was never evidence of weak stability. It was evidence of a noisy ruler, and the agreement between prediction and observation is the strongest internal check in this post: a variance model and a distribution-free rank statistic, built on different assumptions, returning the same number.</p>
-<p>The six-month row says something further. Nearly all of the long-run agreement is the <img src="https://latex.codecogs.com/png.latex?%5Calpha"> term — the persistent part has decayed by then — so <img src="https://latex.codecogs.com/png.latex?%5Calpha"> is behaving like a genuinely fixed property of the item rather than a slow drift.</p>
+<p>The figure shows the difference between the original blunt ruler and the more faithfull one: the grey bar is what the bluntness costs, and the underlying difficulty ordering is stable at 0.86 - <strong>confirming the previous section’s strong conclusion.</strong></p>
+<p>The residuals are reassuring (right pannel): they fall on opposite sides of zero. A systematic error in the variance model would push both the same way.</p>
+<p>The six-month row says something further. Nearly all of the long-run agreement is the <img src="https://latex.codecogs.com/png.latex?%5Calpha"> term — the persistent part has decayed by then — so <img src="https://latex.codecogs.com/png.latex?%5Calpha"> is <strong>behaving like a genuinely fixed property of the item rather than a slow drift</strong>. If we remember section “Does the estimator work?”’s warning, we see that we are safe.</p>
 </section>
 <section id="most-of-it-is-volume" class="level2">
 <h2 class="anchored" data-anchor-id="most-of-it-is-volume">Most of it is volume</h2>
-<p>A large item share is the start of an argument, not the end of one. WQL is scale-free, so a dependence on volume would not be an artefact of units — it would be a statement about predictability: an item selling a third of a unit a day has an irreducibly high <em>relative</em> error, and that is a permanent property of the item.</p>
-<p>That distinction decides what <img src="https://latex.codecogs.com/png.latex?%5Calpha_i"> is worth. If it is a function of volume, then “group the items by difficulty” means “bucket them by volume”, which needs no clustering and which the forecaster reads off the history unaided.</p>
-<p>One correction is mandatory and easy to miss. The sampling noise of a 7-day window is itself strongly volume-dependent, so low-volume items have their <img src="https://latex.codecogs.com/png.latex?%5Calpha"> inflated <strong>more</strong> — which would manufacture exactly the relationship I am testing for. A global bias adjustment cannot fix a bias that differs per item, so I measure each item’s noise from its own odd and even days and remove it individually.</p>
+<p>A large item share isn’t the end of our analysis. WQL is scale-free, so a dependence on volume would not be an artefact of units — it would be a statement about predictability: <em>“an item selling a third of a unit a day has an <strong>irreducibly high relative error</strong>, and that is a permanent property of the item”</em>.</p>
+<p>That distinction decides what <img src="https://latex.codecogs.com/png.latex?%5Calpha_i"> is worth. If it is a function of volume, then “group the items by difficulty” means <strong>“bucket them by volume”</strong>, which needs no clustering and which the forecaster reads off the history unaided.</p>
+<p>One correction is mandatory though. The sampling noise of a 7-day window is itself strongly volume-dependent, so low-volume items have their <img src="https://latex.codecogs.com/png.latex?%5Calpha"> <strong>inflated</strong> more — which would manufacture exactly the relationship I am testing for. A global bias adjustment cannot fix a bias that differs per item, so I measure each item’s noise from its own odd and even days and remove it individually.</p>
 <div class="cell" data-execution_count="8">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -1932,14 +1942,16 @@ Figure&nbsp;5: Stable difficulty against volume, one point per item. Point size 
 </div>
 </div>
 </div>
-<p>Volume and sparsity together explain <strong>63%</strong> of the stable difficulty. Two details matter for reading that.</p>
-<p><strong>They are not two explanations.</strong> Volume alone reaches the same 63%; adding the zero-day share moves nothing. At a Spearman of +0.71 with <img src="https://latex.codecogs.com/png.latex?%5Calpha"> and a near-mechanical relationship to volume on data that is two thirds zeros, sparsity is a second view of the same quantity, not an independent factor.</p>
-<p><strong>And the noise channel is not what is driving it.</strong> A variance subtraction fixes an inflated spread, not an inflated <em>level</em>, and <img src="https://latex.codecogs.com/png.latex?x"> is a log, so a noisier estimate of the same underlying error need not have the same expectation. The direct test is to ask how much of <img src="https://latex.codecogs.com/png.latex?%5Calpha"> the measurement noise itself explains: it reaches 0.63 as a Spearman against 0.77 for volume, and 34% of the variance against 63%. If the volume relationship were an artefact of the noise level, the noise level would be the proximate cause and the stronger correlate. It is the weaker one, by a clear margin.</p>
-<p>So <strong>two thirds of the stable item effect is a sort on a number already in the history</strong>, and one third is not: 15.6% of the whole error budget, against 2.0% for the week and 11.5% for everything transient. It is the largest addressable term left, and the only one a grouping could earn its keep on.</p>
+<p>So we obtain a good linear tendency that confirms the initial statement: volume and sparsity together explain <strong>63%</strong> of the stable difficulty. Two details matter for reading that.</p>
+<p><strong>They are not two different readings.</strong> Volume alone reaches the same 63%, soadding the zero-day share moves nothing. At a Spearman of +0.71 with <img src="https://latex.codecogs.com/png.latex?%5Calpha"> and a near-mechanical relationship to volume on data that is two thirds zeros, sparsity is a second view of the same quantity, not an independent factor.</p>
+<p><strong>And the noise channel is not what is driving it.</strong> Wwe already justified that a noisier estimate of the same underlying error could have a different expectation. The direct test is to ask how much of <img src="https://latex.codecogs.com/png.latex?%5Calpha"> the measurement noise itself explains: it reaches 0.63 as a Spearman against 0.77 for volume, and 34% of the variance against 63%. If the volume relationship were an artefact of the noise level, the noise level would be the proximate cause and the stronger correlate. It is the weaker one, by a clear margin.</p>
+<p>So <strong>two thirds of the stable item effect is a sort on a number already in the history</strong>, and one third is not: 15.6% of the whole error budget, against 2.0% for the week and 11.5% for everything transient. It is the <strong>largest addressable term left</strong>, and the only one a grouping could earn its keep on. So I tried to find some root cause of its effect.</p>
 </section>
 <section id="is-the-rest-of-it-in-the-weekly-shape" class="level2">
 <h2 class="anchored" data-anchor-id="is-the-rest-of-it-in-the-weekly-shape">Is the rest of it in the weekly shape?</h2>
-<p>The residual is real. The question is where to look for it, and I had already built the machinery to look in one specific place: the <strong>weekly shape</strong> — the share of a week falling on each weekday. Each week is normalised to 1, the weeks are pooled, and the result is a 7-vector summing to 1, so how much an item sells drops out and only <em>when</em> it sells remains.</p>
+<p>The residual is real. The question is where to look for it, and I tried to do so in the <strong>weekly shape</strong> — the share of a week falling on each weekday. Shape is worth testing because it is a different axis from volume by construction. But that is also why the link cannot be assumed: the dominant component of the item effect has been removed from the object on purpose, so whether anything of the item effect is left in that object is an open empirical question — and the cheapest one available, because it decides whether a clustering of the shape space is worth building at all.</p>
+<p><strong>Could the residual be understood from categorizing items based on their weekly shape?</strong> Each week is normalised to 1, the weeks are pooled, and the result is <em>a 7-vector summing to 1</em>, so how much an item sells drops out and only <em>when</em> it sells remains.</p>
+<p>Let’s see what that looks like:</p>
 <div id="cell-fig-object" class="cell" data-execution_count="11">
 <details class="code-fold">
 <summary>Show the code</summary>
@@ -2147,12 +2159,12 @@ Figure&nbsp;6: Left: 40 individual weekly profiles with the population mean over
 </div>
 </div>
 </div>
-<p>Here is that construction, animated (with manim), on <strong>planted archetypes</strong>: four invented weekly shapes, scattered and then redrawn as counts at the items’ real weekly totals. It is synthetic data, and saying so is the point — it shows what the space is and what genuine structure in it would look like, which is what makes the measurement below legible either way.</p>
+<p>The left and right plot reveal these weekly patterns with different perspectives, but they both seem to suggest that we are facing a <strong>continuum</strong> - which wouldn’t give us any new way to track down the residual error.</p>
+<p>In case the construction isn’t clear, I animated it (with manim) on <strong>planted archetypes</strong>: four invented weekly shapes, scattered and then redrawn as counts at the items’ real weekly totals. It is synthetic data that shows what the space is and <em>what genuine structure in it would look like</em>, which is what makes the measurement below legible either way.</p>
 <video autoplay="" loop="" muted="" playsinline="" style="width:100%;max-width:720px">
 <source src="weekly-embedding.mp4" type="video/mp4">
 </video>
-<p>Shape is worth testing because it is a different axis from volume by construction. But that is also why the link cannot be assumed: the dominant component of the item effect has been removed from the object on purpose, so whether anything of the item effect is left <em>in</em> that object is an open empirical question — and the cheapest one available, because it decides whether a clustering of the shape space is worth building at all.</p>
-<p>So I regress <img src="https://latex.codecogs.com/png.latex?%5Calpha_i"> on volume, sparsity <strong>and the per-item noise level</strong>, then add the six free shape coordinates and ask what they buy. Three things make the answer readable:</p>
+<p>So I regress <img src="https://latex.codecogs.com/png.latex?%5Calpha_i"> on volume, sparsity and the per-item noise level, then add the six free shape coordinates (the sum adds up to one, so the seventh is derived from the first six) and ask what they buy. I defined three rules:</p>
 <ul>
 <li><strong>Shape is measured on history strictly before the panel’s first origin.</strong> A profile computed over the scored windows would be partly measured on what it predicts.</li>
 <li><strong>Six extra regressors explain variance by construction</strong> — about <img src="https://latex.codecogs.com/png.latex?k/n"> of what is left. That is removed in expectation, and a <strong>permutation test</strong> gives the distribution instead of the expectation. The shuffle is <strong>stratified by volume</strong>, so the null keeps whatever relationship shape has with volume and destroys only its link to difficulty. Permuting freely would break the shape–volume relationship too, make the null easier to beat, and bias the test toward finding an effect.</li>
@@ -2351,203 +2363,15 @@ Figure&nbsp;7: Left: what the weekly shape adds to the stable difficulty, agains
 </div>
 </div>
 </div>
-<p><strong>The weekly shape carries essentially none of it.</strong> The observed increment is 0.7% of the stable difficulty, <em>below</em> the null’s 95th percentile of 1.5%, at p = 0.15 over 1000 permutations in 10 volume strata. Shape explains less than a typical volume-preserving shuffle does.</p>
-<p>And the result is <strong>bounded</strong>, not merely absent. The profile’s own split-half reliability on these items is 0.44, so a perfectly measured weekly shape could account for at most 1.5% — the fourth bar above. There is no version of this measurement, however much the ruler improves, in which the weekly shape reaches the 15.6% that is still on the item.</p>
-<p>Three details keep this from being an artefact of the setup:</p>
-<ul>
-<li>135 of 138 panel items have a 26-week shape before the first origin, so the sub-population <em>is</em> the panel;</li>
-<li>reliability here (0.44) is <em>better</em> than across the full roster, because the panel’s members are the steady sellers — this is the favourable corner of the data for shape;</li>
-<li>the per-weekday correlations on the right never leave ±0.16, so no single weekday carries difficulty either.</li>
-</ul>
-</section>
-<section id="what-is-the-underlying-structure-of-the-historical-data" class="level2">
-<h2 class="anchored" data-anchor-id="what-is-the-underlying-structure-of-the-historical-data">What is the underlying structure of the historical data?</h2>
-<p>So far I have been dissecting the structure of the <em>errors</em>. The same question can be put to the items themselves: does the population contain <strong>discrete types</strong>, or is it one continuum? I took the angle of weekly shape again.</p>
-<div class="cell" data-execution_count="13">
-<details class="code-fold">
-<summary>Show the code</summary>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10" style="background: #f1f3f5;"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1">strengths <span class="op" style="color: #5E5E5E;
-background-color: null;
-font-style: inherit;">=</span> {<span class="bu" style="color: null;
-background-color: null;
-font-style: inherit;">int</span>(k): v <span class="cf" style="color: #003B4F;
-background-color: null;
-font-weight: bold;
-font-style: inherit;">for</span> k, v <span class="kw" style="color: #003B4F;
-background-color: null;
-font-weight: bold;
-font-style: inherit;">in</span> AUDIT[<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"prediction_strength"</span>].items()}</span>
-<span id="cb10-2">md(pl.DataFrame([</span>
-<span id="cb10-3">    {<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"quantity"</span>: <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"items audited"</span>, <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"value"</span>: <span class="bu" style="color: null;
-background-color: null;
-font-style: inherit;">float</span>(AUDIT[<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"n_series_audited"</span>])},</span>
-<span id="cb10-4">    {<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"quantity"</span>: <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"profile reliability (bar is 0.80)"</span>, <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"value"</span>: AUDIT[<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"split_half_audited"</span>]},</span>
-<span id="cb10-5">    {<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"quantity"</span>: <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"reproducible cluster count K-hat"</span>, <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"value"</span>: <span class="bu" style="color: null;
-background-color: null;
-font-style: inherit;">float</span>(AUDIT[<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"k_hat"</span>])},</span>
-<span id="cb10-6">    {<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"quantity"</span>: <span class="ss" style="color: #20794D;
-background-color: null;
-font-style: inherit;">f"best prediction strength (at K=</span><span class="sc" style="color: #5E5E5E;
-background-color: null;
-font-style: inherit;">{</span><span class="bu" style="color: null;
-background-color: null;
-font-style: inherit;">max</span>(strengths, key<span class="op" style="color: #5E5E5E;
-background-color: null;
-font-style: inherit;">=</span>strengths.get)<span class="sc" style="color: #5E5E5E;
-background-color: null;
-font-style: inherit;">}</span><span class="ss" style="color: #20794D;
-background-color: null;
-font-style: inherit;">)"</span>,</span>
-<span id="cb10-7">     <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"value"</span>: <span class="bu" style="color: null;
-background-color: null;
-font-style: inherit;">max</span>(strengths.values())},</span>
-<span id="cb10-8">    {<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"quantity"</span>: <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"separation achieved"</span>, <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"value"</span>: AUDIT[<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"separation_achieved"</span>]},</span>
-<span id="cb10-9">    {<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"quantity"</span>: <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"detection floor from the positive control"</span>,</span>
-<span id="cb10-10">     <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"value"</span>: AUDIT[<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"detection_floor_delta"</span>]},</span>
-<span id="cb10-11">    {<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"quantity"</span>: <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"null's worst spread ratio (refuse above 1.5)"</span>,</span>
-<span id="cb10-12">     <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"value"</span>: AUDIT[<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"null_geometry_worst_spread_ratio"</span>]},</span>
-<span id="cb10-13">    {<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"quantity"</span>: <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"calendar-alignment lift over random rotation"</span>,</span>
-<span id="cb10-14">     <span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"value"</span>: AUDIT[<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"alignment"</span>][<span class="st" style="color: #20794D;
-background-color: null;
-font-style: inherit;">"lift"</span>]},</span>
-<span id="cb10-15">]), digits<span class="op" style="color: #5E5E5E;
-background-color: null;
-font-style: inherit;">=</span><span class="dv" style="color: #AD0000;
-background-color: null;
-font-style: inherit;">3</span>)</span></code></pre></div></div>
-</details>
-<div id="tbl-audit" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-execution_count="13">
-<figure class="quarto-float quarto-float-tbl figure">
-<figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-audit-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Table&nbsp;3: The clustering audit of the weekly shape space.
-</figcaption>
-<div aria-describedby="tbl-audit-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<div class="cell-output cell-output-display cell-output-markdown" data-execution_count="13">
-<table class="cell caption-top table table-sm table-striped small">
-<thead>
-<tr class="header">
-<th>quantity</th>
-<th>value</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>items audited</td>
-<td>493.000</td>
-</tr>
-<tr class="even">
-<td>profile reliability (bar is 0.80)</td>
-<td>0.321</td>
-</tr>
-<tr class="odd">
-<td>reproducible cluster count K-hat</td>
-<td>1.000</td>
-</tr>
-<tr class="even">
-<td>best prediction strength (at K=2)</td>
-<td>0.746</td>
-</tr>
-<tr class="odd">
-<td>separation achieved</td>
-<td>0.000</td>
-</tr>
-<tr class="even">
-<td>detection floor from the positive control</td>
-<td>1.503</td>
-</tr>
-<tr class="odd">
-<td>null’s worst spread ratio (refuse above 1.5)</td>
-<td>3.900</td>
-</tr>
-<tr class="even">
-<td>calendar-alignment lift over random rotation</td>
-<td>2.582</td>
-</tr>
-</tbody>
-</table>
-</div>
-</div>
-</figure>
-</div>
-</div>
-<div id="verdict-10" class="cell" data-execution_count="14">
-<pre><code>Inconclusive: the fitted null does not reproduce the real cloud's geometry, so its p-value cannot be read.</code></pre>
-</div>
-<p>Two of its four conditions could not be evaluated, and they fail in opposite directions.</p>
-<p><strong>The population was never filtered.</strong> The audit was written to keep only the volume deciles whose profile clears a 0.80 reliability bar. No decile cleared it — reliability runs from 0.21 in the sparsest tenth to 0.70 in the densest — so nothing was filtered and the audit ran on all 493 items, including the half whose week-to-week shape variation is indistinguishable from multinomial counting noise. Clustering a cloud in which half the points are near-random draws around the population mean <strong>pushes the estimated cluster count toward one</strong>, which is the result obtained. The negative finding is the one that defect compromises.</p>
-<p><strong>And the null is not usable.</strong> It is fitted to the real cloud — dominant axis by SVD, a smooth manifold along it, Gaussian residuals carrying the real residual covariance — but its worst per-coordinate spread comes out 3.9× the real cloud’s, against a refusal threshold of 1.5. A null more diffuse than the data clusters less reproducibly, so the real data beats it too easily and the p-value is biased <strong>toward</strong> finding structure. So p = 0.024 — which equals its own floor with 40 nulls — cannot be read either.</p>
-<p>It would have been easy to publish a continuum here. <img src="https://latex.codecogs.com/png.latex?%5Chat%20K%20=%201"> on the real data, every one of the 40 nulls also returning 1, separation 0.00 against a detection floor of 1.50 — three true sentences from which “one continuum, no discrete types” follows smoothly. The checks standing in the way are the ones I imposed on myself, and they say the smooth conclusion is unsupported in both directions.</p>
-<p>One part of the audit does pass cleanly, and it is a positive structural result: the weekly shapes are <strong>anchored to the calendar</strong>. The rotation that best aligns a pair of profiles is zero for 37% of pairs against 14% for a randomly rotated copy — a lift of ×2.58. Euclidean distance on these 7-vectors is measuring shape, not clock offset.</p>
-<p><strong>What the bridge test does to all of this.</strong> Repairing the null and restoring the power were the obvious next steps, and they are no longer worth taking <em>for this purpose</em>: shape carries at most 1.5% of the difficulty that volume leaves unexplained, so even a repaired audit returning crisp discrete types would be organising almost none of the error.</p>
-<p>That is not the same as the work being wasted. The audit answers a real question about the data — do items form types in weekly shape — now known to be <strong>decoupled from forecast difficulty</strong>. And there is a symmetry worth noticing: the audit found shape strongly volume-dependent in its <em>measurability</em>, and the bridge test found it nearly independent of difficulty in its <em>content</em>. Both say the same thing from opposite ends. Shape and difficulty are different axes, and the chain that ran from one to the other was assumed rather than measured.</p>
+<p>Conclusion: <strong>the weekly shape carries essentially none of the error.</strong> The observed increment is 0.7% of the stable difficulty, <em>below</em> the null’s 95th percentile of 1.5%, at p = 0.15 over 1000 permutations in 10 volume strata. Shape explains less than a typical volume-preserving shuffle does.</p>
+<p>And the result is <strong>bounded</strong>. The profile’s own split-half reliability on these items is 0.44, so a perfectly measured weekly shape could account for at most 1.5% — the fourth bar from the figure. There is no version of this measurement, however much the ruler improves, in which the weekly shape reaches the 15.6% that is still on the item.</p>
+<p>The per-weekday correlations on the right never leave ±0.16, so no single weekday carries difficulty either.</p>
 </section>
 <section id="where-this-leaves-the-question" class="level2">
 <h2 class="anchored" data-anchor-id="where-this-leaves-the-question">Where this leaves the question</h2>
-<p><strong>Established.</strong> 42% of the variance in log WQL sits on the identity of the item against 2% on the week, with an underlying week-to-week stability of 0.86 and a six-month stability of 0.78. Of that, 63% is volume — a continuous covariate already present in the history, needing no clustering. The 15.6% that remains is item-specific, stable, and <strong>not</strong> in the weekly shape, at a ceiling of 1.5%. The shape space is calendar-anchored, and its measurability rises monotonically with volume.</p>
-<p><strong>Open.</strong> Whether that residual is organised at all, and on what axis. Candidates I have not tested: burstiness and volatility, lifecycle stage, promotion and price response, intermittency structure beyond the zero-day share. Each is one covariate block through the same machinery — the test is cheap now that the panel and the estimator exist, and a negative is as useful as a positive because it is bounded.</p>
-<p><strong>And two limits that no further run removes.</strong> The bridge test is <strong>linear</strong> in the shape coordinates, so a difficulty depending on shape non-monotonically — hard at both ends of the weekend axis — would be missed, and the ceiling is a linear ceiling. And shape here is measured once, well before the scored windows: a profile that <em>drifts</em> could matter nearer them, which is one of the audit steps I skipped.</p>
+<p><strong>What we established about the error’s origin.</strong> 42% of the variance in log WQL sits on the <strong>identity of the item</strong> against 2% on the week, with high week-to-week stability - and even six-month stability. Of that, 63% is <strong>volume</strong> — a continuous covariate already present in the history, needing no clustering. The 15.6% that remains is item-specific, stable, and <strong>not</strong> in the weekly shape, at a ceiling of 1.5%. The shape space is calendar-anchored, and its measurability rises monotonically with volume.</p>
+<p><strong>Leads that ares till open.</strong> Whether that residual is organised at all, and on what axis. Candidates I have not tested are, for example: burstiness and volatility, lifecycle stage, promotion and price response, intermittency structure beyond the zero-day share…</p>
+<p><strong>What it means for our model’s performances</strong>. We started this post by wondering if we could leverage some hidden structure’s correlation with prediction difficulty. And we did find such structure: however the irony is that it is inherently already accessible and used by Chronos2. Therefore, we are back to the same stage as in the end of the previous post, though our understanding is much greater.</p>
 
 
 <!-- -->
