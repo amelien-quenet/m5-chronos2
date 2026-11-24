@@ -52,6 +52,3 @@ Three commitments, kept throughout:
   device it was produced on.
 
 Code and artifacts: [`m5-chronos2`](https://github.com/amelien-quenet/m5-chronos2).
-
-<!-- TODO (yours, not mine to invent): a short paragraph on why you did this —
-     first blog, what you wanted to learn, who you are writing for. -->

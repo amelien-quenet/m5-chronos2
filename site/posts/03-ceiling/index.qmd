@@ -1,6 +1,6 @@
 ---
 title: "Have we reached a ceiling?"
-description: "A comprehensive tracking of the error's origin, plus a qualitative check of the underlying structure of the data."
+description: "A comprehensive tracking of the error's origin, to uncover potentially missed levers"
 order: 3
 date: "2026-11-07"
 categories: [M5, diagnostics, clustering, statistics]
